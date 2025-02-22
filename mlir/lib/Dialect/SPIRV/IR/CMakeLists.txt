@@ -9,8 +9,8 @@ add_mlir_dialect_library(MLIRSPIRVDialect
   CooperativeMatrixOps.cpp
   GroupOps.cpp
   IntegerDotProductOps.cpp
-  JointMatrixOps.cpp
   MemoryOps.cpp
+  MeshOps.cpp
   SPIRVAttributes.cpp
   SPIRVCanonicalization.cpp
   SPIRVGLCanonicalization.cpp
@@ -27,6 +27,7 @@ add_mlir_dialect_library(MLIRSPIRVDialect
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/SPIRV
 
   DEPENDS
+  MLIRGPUDialect
   MLIRSPIRVAttributeIncGen
   MLIRSPIRVAttrUtilsGen
   MLIRSPIRVAvailabilityIncGen

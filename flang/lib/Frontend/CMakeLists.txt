@@ -8,25 +8,25 @@ add_flang_library(flangFrontend
   FrontendAction.cpp
   FrontendActions.cpp
   FrontendOptions.cpp
-  LangOptions.cpp
   TextDiagnosticPrinter.cpp
   TextDiagnosticBuffer.cpp
   TextDiagnostic.cpp
 
   DEPENDS
+  CUFDialect
   FIRDialect
+  FIROptCodeGenPassIncGen
   FIROptTransformsPassIncGen
   HLFIRDialect
-  MLIRIR
-  ${dialect_libs}
-  ${extension_libs}
 
   LINK_LIBS
+  CUFDialect
   FortranParser
   FortranSemantics
   FortranEvaluate
-  FortranCommon
+  FortranSupport
   FortranLower
+  FortranSupport
   FIRDialect
   FIRDialectSupport
   FIRSupport
@@ -35,6 +35,30 @@ add_flang_library(flangFrontend
   FIRTransforms
   HLFIRDialect
   HLFIRTransforms
+  flangPasses
+  FIROpenACCSupport
+  FlangOpenMPTransforms
+
+  LINK_COMPONENTS
+  Passes
+  Analysis
+  Extensions
+  IRPrinter
+  IRReader
+  Option
+  Support
+  Target
+  TargetParser
+  FrontendDriver
+  FrontendOpenACC
+  FrontendOpenMP
+
+  MLIR_DEPS
+  MLIRIR
+  ${dialect_libs}
+  ${extension_libs}
+
+  MLIR_LIBS
   MLIRTransforms
   MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation
@@ -42,18 +66,6 @@ add_flang_library(flangFrontend
   MLIRTargetLLVMIRImport
   ${dialect_libs}
   ${extension_libs}
-
-  LINK_COMPONENTS
-  Passes
-  Analysis
-  Extensions
-  IRReader
-  Option
-  Support
-  Target
-  TargetParser
-  FrontendOpenACC
-  FrontendOpenMP
 
   CLANG_LIBS
   clangBasic

@@ -121,18 +121,18 @@ public:
 
   void stackifyVReg(MachineRegisterInfo &MRI, unsigned VReg) {
     assert(MRI.getUniqueVRegDef(VReg));
-    auto I = Register::virtReg2Index(VReg);
+    auto I = Register(VReg).virtRegIndex();
     if (I >= VRegStackified.size())
       VRegStackified.resize(I + 1);
     VRegStackified.set(I);
   }
   void unstackifyVReg(unsigned VReg) {
-    auto I = Register::virtReg2Index(VReg);
+    auto I = Register(VReg).virtRegIndex();
     if (I < VRegStackified.size())
       VRegStackified.reset(I);
   }
   bool isVRegStackified(unsigned VReg) const {
-    auto I = Register::virtReg2Index(VReg);
+    auto I = Register(VReg).virtRegIndex();
     if (I >= VRegStackified.size())
       return false;
     return VRegStackified.test(I);
@@ -141,12 +141,12 @@ public:
   void initWARegs(MachineRegisterInfo &MRI);
   void setWAReg(unsigned VReg, unsigned WAReg) {
     assert(WAReg != WebAssembly::UnusedReg);
-    auto I = Register::virtReg2Index(VReg);
+    auto I = Register(VReg).virtRegIndex();
     assert(I < WARegs.size());
     WARegs[I] = WAReg;
   }
   unsigned getWAReg(unsigned VReg) const {
-    auto I = Register::virtReg2Index(VReg);
+    auto I = Register(VReg).virtRegIndex();
     assert(I < WARegs.size());
     return WARegs[I];
   }
@@ -169,12 +169,11 @@ void computeSignatureVTs(const FunctionType *Ty, const Function *TargetFunc,
                          SmallVectorImpl<MVT> &Params,
                          SmallVectorImpl<MVT> &Results);
 
-void valTypesFromMVTs(const ArrayRef<MVT> &In,
-                      SmallVectorImpl<wasm::ValType> &Out);
+void valTypesFromMVTs(ArrayRef<MVT> In, SmallVectorImpl<wasm::ValType> &Out);
 
-std::unique_ptr<wasm::WasmSignature>
-signatureFromMVTs(const SmallVectorImpl<MVT> &Results,
-                  const SmallVectorImpl<MVT> &Params);
+wasm::WasmSignature *signatureFromMVTs(MCContext &Ctx,
+                                       const SmallVectorImpl<MVT> &Results,
+                                       const SmallVectorImpl<MVT> &Params);
 
 namespace yaml {
 

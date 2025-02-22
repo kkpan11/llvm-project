@@ -7,11 +7,18 @@
 //===----------------------------------------------------------------------===//
 //
 // This file describes the RISC-V instructions from the standard 'Zfa'
-// additional floating-point extension, version 0.1.
-// This version is still experimental as the 'Zfa' extension hasn't been
-// ratified yet.
+// additional floating-point extension, version 1.0.
 //
 //===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// RISC-V specific DAG Nodes.
+//===----------------------------------------------------------------------===//
+
+def SDT_RISCVFLI
+    : SDTypeProfile<1, 1, [SDTCisFP<0>, SDTCisVT<1, XLenVT>]>;
+
+def riscv_fli : SDNode<"RISCVISD::FLI", SDT_RISCVFLI>;
 
 //===----------------------------------------------------------------------===//
 // Operand and SDNode transformation definitions.
@@ -23,24 +30,30 @@ def LoadFPImmOperand : AsmOperandClass {
   let ParserMethod = "parseFPImm";
   let RenderMethod = "addFPImmOperands";
   let DiagnosticType = "InvalidLoadFPImm";
+  let DiagnosticString = "operand must be a valid floating-point constant";
 }
 
 def loadfpimm : Operand<XLenVT> {
   let ParserMatchClass = LoadFPImmOperand;
   let PrintMethod = "printFPImmOperand";
+  let OperandType = "OPERAND_UIMM5";
+  let OperandNamespace = "RISCVOp";
 }
 
 def RTZArg : AsmOperandClass {
   let Name = "RTZArg";
   let RenderMethod = "addFRMArgOperands";
   let DiagnosticType = "InvalidRTZArg";
+  let DiagnosticString = "operand must be 'rtz' floating-point rounding mode";
   let ParserMethod = "parseFRMArg";
 }
 
 def rtzarg : Operand<XLenVT> {
   let ParserMatchClass = RTZArg;
   let PrintMethod = "printFRMArg";
-  let DecoderMethod = "decodeFRMArg";
+  let DecoderMethod = "decodeRTZArg";
+  let OperandType = "OPERAND_RTZARG";
+  let OperandNamespace = "RISCVOp";
 }
 
 //===----------------------------------------------------------------------===//
@@ -114,6 +127,7 @@ def FROUND_D : FPUnaryOp_r_frm<0b0100001, 0b00100, FPR64, FPR64, "fround.d">,
 def FROUNDNX_D : FPUnaryOp_r_frm<0b0100001, 0b00101, FPR64, FPR64, "froundnx.d">,
                  Sched<[WriteFRoundF64, ReadFRoundF64]>;
 
+let IsSignExtendingOpW = 1 in
 def FCVTMOD_W_D
     : FPUnaryOp_r_rtz<0b1100001, 0b01000, GPR, FPR64, "fcvtmod.w.d">,
       Sched<[WriteFCvtF64ToI32, ReadFCvtF64ToI32]>;
@@ -190,6 +204,8 @@ def : InstAlias<"fgeq.h $rd, $rs, $rt",
 //===----------------------------------------------------------------------===//
 
 let Predicates = [HasStdExtZfa] in {
+def: Pat<(f32 (riscv_fli timm:$imm)), (FLI_S timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_S, FPR32, f32>;
 def: PatFprFpr<fmaximum, FMAXM_S, FPR32, f32>;
 
@@ -201,6 +217,7 @@ def: Pat<(any_frint FPR32:$rs1), (FROUNDNX_S FPR32:$rs1, FRM_DYN)>;
 def: Pat<(any_fnearbyint FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_DYN)>;
 
 def: Pat<(any_fround FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RMM)>;
+def: Pat<(any_froundeven FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RNE)>;
 def: Pat<(any_ffloor FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RDN)>;
 def: Pat<(any_fceil FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RUP)>;
 def: Pat<(any_ftrunc FPR32:$rs1), (FROUND_S FPR32:$rs1, FRM_RTZ)>;
@@ -212,6 +229,8 @@ def: PatSetCC<FPR32, strict_fsetcc, SETOLE, FLEQ_S, f32>;
 } // Predicates = [HasStdExtZfa]
 
 let Predicates = [HasStdExtZfa, HasStdExtD] in {
+def: Pat<(f64 (riscv_fli timm:$imm)), (FLI_D timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_D, FPR64, f64>;
 def: PatFprFpr<fmaximum, FMAXM_D, FPR64, f64>;
 
@@ -240,6 +259,8 @@ def : Pat<(RISCVBuildPairF64 GPR:$rs1, GPR:$rs2),
 }
 
 let Predicates = [HasStdExtZfa, HasStdExtZfh] in {
+def: Pat<(f16 (riscv_fli timm:$imm)), (FLI_H timm:$imm)>;
+
 def: PatFprFpr<fminimum, FMINM_H, FPR16, f16>;
 def: PatFprFpr<fmaximum, FMAXM_H, FPR16, f16>;
 

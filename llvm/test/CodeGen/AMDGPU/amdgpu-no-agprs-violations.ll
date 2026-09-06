@@ -1,5 +1,5 @@
-; RUN: llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx908 < %s | FileCheck -check-prefixes=CHECK,GFX908 %s
-; RUN: not llc -mtriple=amdgcn-amd-amdhsa -mcpu=gfx90a < %s 2> %t.err | FileCheck -check-prefixes=CHECK,GFX90A %s
+; RUN: llc -mtriple=amdgpu9.08-amd-amdhsa < %s | FileCheck -check-prefixes=CHECK,GFX908 %s
+; RUN: not llc -mtriple=amdgpu9.0a-amd-amdhsa < %s 2> %t.err | FileCheck -check-prefixes=CHECK,GFX90A %s
 ; RUN: FileCheck --implicit-check-not=error -check-prefix=ERR < %t.err %s
 
 ; Test undefined behavior where a function ends up needing AGPRs that
@@ -13,9 +13,8 @@
 ; CHECK: {{^}}kernel_illegal_agpr_use_asm:
 ; CHECK: ; use a0
 
-; GFX908: NumVgprs: 3
-; GFX90A: NumVgprs: 1
-; CHECK: NumAgprs: 0
+; CHECK: NumVgprs: 0
+; CHECK: NumAgprs: 1
 define amdgpu_kernel void @kernel_illegal_agpr_use_asm() #0 {
   call void asm sideeffect "; use $0", "a"(i32 poison)
   ret void
@@ -25,7 +24,7 @@ define amdgpu_kernel void @kernel_illegal_agpr_use_asm() #0 {
 ; CHECK: ; use a0
 
 ; CHECK: NumVgprs: 0
-; CHECK: NumAgprs: 0
+; CHECK: NumAgprs: 1
 define void @func_illegal_agpr_use_asm() #0 {
   call void asm sideeffect "; use $0", "a"(i32 poison)
   ret void

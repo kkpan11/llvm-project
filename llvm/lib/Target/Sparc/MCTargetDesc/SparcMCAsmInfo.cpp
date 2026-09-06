@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "SparcMCAsmInfo.h"
-#include "SparcMCExpr.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCExpr.h"
@@ -23,7 +22,9 @@ using namespace llvm;
 
 void SparcELFMCAsmInfo::anchor() {}
 
-SparcELFMCAsmInfo::SparcELFMCAsmInfo(const Triple &TheTriple) {
+SparcELFMCAsmInfo::SparcELFMCAsmInfo(const Triple &TheTriple,
+                                     const MCTargetOptions &Options)
+    : MCAsmInfoELF(Options) {
   bool isV9 = (TheTriple.getArch() == Triple::sparcv9);
   IsLittleEndian = (TheTriple.getArch() == Triple::sparcel);
 
@@ -42,29 +43,16 @@ SparcELFMCAsmInfo::SparcELFMCAsmInfo(const Triple &TheTriple) {
   ExceptionsType = ExceptionHandling::DwarfCFI;
 
   UsesELFSectionDirectiveForBSS = true;
+
+  DwarfFDERelSymbolSpec = ELF::R_SPARC_DISP32;
 }
 
-const MCExpr*
-SparcELFMCAsmInfo::getExprForPersonalitySymbol(const MCSymbol *Sym,
-                                               unsigned Encoding,
-                                               MCStreamer &Streamer) const {
-  if (Encoding & dwarf::DW_EH_PE_pcrel) {
-    MCContext &Ctx = Streamer.getContext();
-    return SparcMCExpr::create(ELF::R_SPARC_DISP32,
-                               MCSymbolRefExpr::create(Sym, Ctx), Ctx);
-  }
-
-  return MCAsmInfo::getExprForPersonalitySymbol(Sym, Encoding, Streamer);
-}
-
-const MCExpr*
-SparcELFMCAsmInfo::getExprForFDESymbol(const MCSymbol *Sym,
-                                       unsigned Encoding,
-                                       MCStreamer &Streamer) const {
-  if (Encoding & dwarf::DW_EH_PE_pcrel) {
-    MCContext &Ctx = Streamer.getContext();
-    return SparcMCExpr::create(ELF::R_SPARC_DISP32,
-                               MCSymbolRefExpr::create(Sym, Ctx), Ctx);
-  }
-  return MCAsmInfo::getExprForFDESymbol(Sym, Encoding, Streamer);
+void SparcELFMCAsmInfo::printSpecifierExpr(raw_ostream &OS,
+                                           const MCSpecifierExpr &Expr) const {
+  StringRef S = Sparc::getSpecifierName(Expr.getSpecifier());
+  if (!S.empty())
+    OS << '%' << S << '(';
+  printExpr(OS, *Expr.getSubExpr());
+  if (!S.empty())
+    OS << ')';
 }

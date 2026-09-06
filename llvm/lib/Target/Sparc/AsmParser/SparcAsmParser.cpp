@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCTargetDesc/SparcMCExpr.h"
+#include "MCTargetDesc/SparcMCAsmInfo.h"
 #include "MCTargetDesc/SparcMCTargetDesc.h"
 #include "TargetInfo/SparcTargetInfo.h"
 #include "llvm/ADT/SmallVector.h"
@@ -29,6 +29,7 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SMLoc.h"
@@ -38,6 +39,7 @@
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 using namespace llvm;
 
@@ -80,6 +82,8 @@ class SparcAsmParser : public MCTargetAsmParser {
   bool parseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
   ParseStatus parseDirective(AsmToken DirectiveID) override;
+  bool parseExprWithSpecifier(const MCExpr *&Res, SMLoc &E);
+  bool parseDataExpr(const MCExpr *&Res) override;
 
   unsigned validateTargetOperandClass(MCParsedAsmOperand &Op,
                                       unsigned Kind) override;
@@ -109,7 +113,8 @@ class SparcAsmParser : public MCTargetAsmParser {
   ParseStatus parseExpression(int64_t &Val);
 
   // Helper function for dealing with %lo / %hi in PIC mode.
-  const SparcMCExpr *adjustPICRelocation(uint16_t VK, const MCExpr *subExpr);
+  const MCSpecifierExpr *adjustPICRelocation(uint16_t VK,
+                                             const MCExpr *subExpr);
 
   // Helper function to see if current token can start an expression.
   bool isPossibleExpression(const AsmToken &Token);
@@ -139,8 +144,8 @@ class SparcAsmParser : public MCTargetAsmParser {
 
 public:
   SparcAsmParser(const MCSubtargetInfo &sti, MCAsmParser &parser,
-                 const MCInstrInfo &MII, const MCTargetOptions &Options)
-      : MCTargetAsmParser(Options, sti, MII), Parser(parser),
+                 const MCInstrInfo &MII)
+      : MCTargetAsmParser(sti, MII), Parser(parser),
         MRI(*Parser.getContext().getRegisterInfo()) {
     Parser.addAliasForDirective(".half", ".2byte");
     Parser.addAliasForDirective(".uahalf", ".2byte");
@@ -233,7 +238,7 @@ private:
   };
 
   struct RegOp {
-    unsigned RegNum;
+    MCRegister Reg;
     RegisterKind Kind;
   };
 
@@ -242,8 +247,8 @@ private:
   };
 
   struct MemOp {
-    unsigned Base;
-    unsigned OffsetReg;
+    MCRegister Base;
+    MCRegister OffsetReg;
     const MCExpr *Off;
   };
 
@@ -324,7 +329,7 @@ public:
 
   MCRegister getReg() const override {
     assert((Kind == k_Register) && "Invalid access!");
-    return Reg.RegNum;
+    return Reg.Reg;
   }
 
   const MCExpr *getImm() const {
@@ -332,12 +337,12 @@ public:
     return Imm.Val;
   }
 
-  unsigned getMemBase() const {
+  MCRegister getMemBase() const {
     assert((Kind == k_MemoryReg || Kind == k_MemoryImm) && "Invalid access!");
     return Mem.Base;
   }
 
-  unsigned getMemOffsetReg() const {
+  MCRegister getMemOffsetReg() const {
     assert((Kind == k_MemoryReg) && "Invalid access!");
     return Mem.OffsetReg;
   }
@@ -371,17 +376,22 @@ public:
     return EndLoc;
   }
 
-  void print(raw_ostream &OS) const override {
+  void print(raw_ostream &OS, const MCAsmInfo &MAI) const override {
     switch (Kind) {
     case k_Token:     OS << "Token: " << getToken() << "\n"; break;
-    case k_Register:  OS << "Reg: #" << getReg() << "\n"; break;
+    case k_Register:
+      OS << "Reg: #" << getReg().id() << "\n";
+      break;
     case k_Immediate: OS << "Imm: " << getImm() << "\n"; break;
-    case k_MemoryReg: OS << "Mem: " << getMemBase() << "+"
-                         << getMemOffsetReg() << "\n"; break;
+    case k_MemoryReg:
+      OS << "Mem: " << getMemBase().id() << "+" << getMemOffsetReg().id()
+         << "\n";
+      break;
     case k_MemoryImm: assert(getMemOff() != nullptr);
-      OS << "Mem: " << getMemBase()
-         << "+" << *getMemOff()
-         << "\n"; break;
+      OS << "Mem: " << getMemBase().id() << "+";
+      MAI.printExpr(OS, *getMemOff());
+      OS << "\n";
+      break;
     case k_ASITag:
       OS << "ASI tag: " << getASITag() << "\n";
       break;
@@ -429,7 +439,7 @@ public:
 
     Inst.addOperand(MCOperand::createReg(getMemBase()));
 
-    assert(getMemOffsetReg() != 0 && "Invalid offset");
+    assert(getMemOffsetReg().isValid() && "Invalid offset");
     Inst.addOperand(MCOperand::createReg(getMemOffsetReg()));
   }
 
@@ -477,10 +487,10 @@ public:
     return Op;
   }
 
-  static std::unique_ptr<SparcOperand> CreateReg(unsigned RegNum, unsigned Kind,
+  static std::unique_ptr<SparcOperand> CreateReg(MCRegister Reg, unsigned Kind,
                                                  SMLoc S, SMLoc E) {
     auto Op = std::make_unique<SparcOperand>(k_Register);
-    Op->Reg.RegNum = RegNum;
+    Op->Reg.Reg = Reg;
     Op->Reg.Kind   = (SparcOperand::RegisterKind)Kind;
     Op->StartLoc = S;
     Op->EndLoc = E;
@@ -537,7 +547,7 @@ public:
       regIdx = Reg - Sparc::I0 + 24;
     if (regIdx % 2 || regIdx > 31)
       return false;
-    Op.Reg.RegNum = IntPairRegs[regIdx / 2];
+    Op.Reg.Reg = IntPairRegs[regIdx / 2];
     Op.Reg.Kind = rk_IntPairReg;
     return true;
   }
@@ -548,7 +558,7 @@ public:
     unsigned regIdx = Reg - Sparc::F0;
     if (regIdx % 2 || regIdx > 31)
       return false;
-    Op.Reg.RegNum = DoubleRegs[regIdx / 2];
+    Op.Reg.Reg = DoubleRegs[regIdx / 2];
     Op.Reg.Kind = rk_DoubleReg;
     return true;
   }
@@ -571,7 +581,7 @@ public:
       Reg = QuadFPRegs[regIdx / 2];
       break;
     }
-    Op.Reg.RegNum = Reg;
+    Op.Reg.Reg = Reg;
     Op.Reg.Kind = rk_QuadReg;
     return true;
   }
@@ -584,13 +594,13 @@ public:
       regIdx = Reg - Sparc::C0;
     if (regIdx % 2 || regIdx > 31)
       return false;
-    Op.Reg.RegNum = CoprocPairRegs[regIdx / 2];
+    Op.Reg.Reg = CoprocPairRegs[regIdx / 2];
     Op.Reg.Kind = rk_CoprocPairReg;
     return true;
   }
 
   static std::unique_ptr<SparcOperand>
-  MorphToMEMrr(unsigned Base, std::unique_ptr<SparcOperand> Op) {
+  MorphToMEMrr(MCRegister Base, std::unique_ptr<SparcOperand> Op) {
     MCRegister offsetReg = Op->getReg();
     Op->Kind = k_MemoryReg;
     Op->Mem.Base = Base;
@@ -599,8 +609,8 @@ public:
     return Op;
   }
 
-  static std::unique_ptr<SparcOperand>
-  CreateMEMr(unsigned Base, SMLoc S, SMLoc E) {
+  static std::unique_ptr<SparcOperand> CreateMEMr(MCRegister Base, SMLoc S,
+                                                  SMLoc E) {
     auto Op = std::make_unique<SparcOperand>(k_MemoryReg);
     Op->Mem.Base = Base;
     Op->Mem.OffsetReg = Sparc::G0;  // always 0
@@ -611,11 +621,11 @@ public:
   }
 
   static std::unique_ptr<SparcOperand>
-  MorphToMEMri(unsigned Base, std::unique_ptr<SparcOperand> Op) {
+  MorphToMEMri(MCRegister Base, std::unique_ptr<SparcOperand> Op) {
     const MCExpr *Imm  = Op->getImm();
     Op->Kind = k_MemoryImm;
     Op->Mem.Base = Base;
-    Op->Mem.OffsetReg = 0;
+    Op->Mem.OffsetReg = MCRegister();
     Op->Mem.Off = Imm;
     return Op;
   }
@@ -848,14 +858,14 @@ bool SparcAsmParser::expandSETX(MCInst &Inst, SMLoc IDLoc,
   // sethi %hh(val), tmp
   Instructions.push_back(MCInstBuilder(SP::SETHIi)
                              .addReg(MCTmpOp.getReg())
-                             .addExpr(SparcMCExpr::create(
-                                 ELF::R_SPARC_HH22, ValExpr, getContext())));
+                             .addExpr(MCSpecifierExpr::create(
+                                 ValExpr, ELF::R_SPARC_HH22, getContext())));
   // or    tmp, %hm(val), tmp
   Instructions.push_back(MCInstBuilder(SP::ORri)
                              .addReg(MCTmpOp.getReg())
                              .addReg(MCTmpOp.getReg())
-                             .addExpr(SparcMCExpr::create(
-                                 ELF::R_SPARC_HM10, ValExpr, getContext())));
+                             .addExpr(MCSpecifierExpr::create(
+                                 ValExpr, ELF::R_SPARC_HM10, getContext())));
   // sllx  tmp, 32, tmp
   Instructions.push_back(MCInstBuilder(SP::SLLXri)
                              .addReg(MCTmpOp.getReg())
@@ -1037,6 +1047,27 @@ ParseStatus SparcAsmParser::parseDirective(AsmToken DirectiveID) {
     Parser.eatToEndOfStatement();
     return ParseStatus::Success;
   }
+  if (IDVal == ".seg") {
+    std::string Name;
+    if (Parser.parseEscapedString(Name) || Parser.parseEOL())
+      return ParseStatus::Failure;
+
+    MCSection *Section;
+    uint32_t Subsection = 0;
+    const MCObjectFileInfo *MCOFI = getContext().getObjectFileInfo();
+    if (Name == "text") {
+      Section = MCOFI->getTextSection();
+    } else if (Name == "data" || Name == "data1") {
+      Section = MCOFI->getDataSection();
+      Subsection = Name == "data1" ? 1 : 0;
+    } else if (Name == "bss") {
+      Section = MCOFI->getBSSSection();
+    } else {
+      return Error(DirectiveID.getLoc(), "unknown segment type");
+    }
+    getStreamer().switchSection(Section, Subsection);
+    return ParseStatus::Success;
+  }
 
   // Let the MC layer to handle other directives.
   return ParseStatus::NoMatch;
@@ -1165,7 +1196,7 @@ ParseStatus SparcAsmParser::parseTailRelocSym(OperandVector &Operands) {
     return Error(getLoc(), "expected valid identifier for operand modifier");
 
   StringRef Name = getParser().getTok().getIdentifier();
-  uint16_t RelType = SparcMCExpr::parseSpecifier(Name);
+  uint16_t RelType = Sparc::parseSpecifier(Name);
   if (RelType == 0)
     return Error(getLoc(), "invalid relocation specifier");
 
@@ -1450,6 +1481,10 @@ SparcAsmParser::parseSparcAsmOperand(std::unique_ptr<SparcOperand> &Op) {
     if (MCRegister Reg = matchRegisterName(Parser.getTok(), RegKind)) {
       StringRef Name = Parser.getTok().getString();
       Parser.Lex(); // Eat the identifier token.
+
+      if (Name == "ncc")
+        Name = is64Bit() ? "xcc" : "icc";
+
       E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
       if (Reg == Sparc::ICC && Name == "xcc")
         Op = SparcOperand::CreateToken("%xcc", S);
@@ -1466,6 +1501,7 @@ SparcAsmParser::parseSparcAsmOperand(std::unique_ptr<SparcOperand> &Op) {
 
   case AsmToken::Plus:
   case AsmToken::Minus:
+  case AsmToken::Tilde:
   case AsmToken::Integer:
   case AsmToken::LParen:
   case AsmToken::Dot:
@@ -1580,12 +1616,12 @@ MCRegister SparcAsmParser::matchRegisterName(const AsmToken &Tok,
   // %r0 - %r31
   int64_t RegNo = 0;
   if (Name.starts_with_insensitive("r") &&
-      !Name.substr(1, 2).getAsInteger(10, RegNo) && RegNo < 31) {
+      !Name.substr(1, 2).getAsInteger(10, RegNo) && RegNo <= 31) {
     RegKind = SparcOperand::rk_IntReg;
     return IntRegs[RegNo];
   }
 
-  if (Name == "xcc") {
+  if (Name == "xcc" || Name == "ncc") {
     // FIXME:: check 64bit.
     RegKind = SparcOperand::rk_Special;
     return SP::ICC;
@@ -1642,7 +1678,7 @@ MCRegister SparcAsmParser::matchRegisterName(const AsmToken &Tok,
 static bool hasGOTReference(const MCExpr *Expr) {
   switch (Expr->getKind()) {
   case MCExpr::Target:
-    if (const SparcMCExpr *SE = dyn_cast<SparcMCExpr>(Expr))
+    if (const MCSpecifierExpr *SE = dyn_cast<MCSpecifierExpr>(Expr))
       return hasGOTReference(SE->getSubExpr());
     break;
 
@@ -1661,12 +1697,15 @@ static bool hasGOTReference(const MCExpr *Expr) {
 
   case MCExpr::Unary:
     return hasGOTReference(cast<MCUnaryExpr>(Expr)->getSubExpr());
+
+  case MCExpr::Specifier:
+    llvm_unreachable("unused by this backend");
   }
   return false;
 }
 
-const SparcMCExpr *SparcAsmParser::adjustPICRelocation(uint16_t RelType,
-                                                       const MCExpr *subExpr) {
+const MCSpecifierExpr *
+SparcAsmParser::adjustPICRelocation(uint16_t RelType, const MCExpr *subExpr) {
   // When in PIC mode, "%lo(...)" and "%hi(...)" behave differently.
   // If the expression refers contains _GLOBAL_OFFSET_TABLE, it is
   // actually a %pc10 or %pc22 relocation. Otherwise, they are interpreted
@@ -1686,7 +1725,7 @@ const SparcMCExpr *SparcAsmParser::adjustPICRelocation(uint16_t RelType,
     }
   }
 
-  return SparcMCExpr::create(RelType, subExpr, getContext());
+  return MCSpecifierExpr::create(subExpr, RelType, getContext());
 }
 
 bool SparcAsmParser::matchSparcAsmModifiers(const MCExpr *&EVal,
@@ -1697,7 +1736,7 @@ bool SparcAsmParser::matchSparcAsmModifiers(const MCExpr *&EVal,
 
   StringRef name = Tok.getString();
 
-  auto VK = SparcMCExpr::parseSpecifier(name);
+  auto VK = Sparc::parseSpecifier(name);
   switch (VK) {
   case 0:
     Error(getLoc(), "invalid relocation specifier");
@@ -1732,6 +1771,32 @@ bool SparcAsmParser::matchSparcAsmModifiers(const MCExpr *&EVal,
   return true;
 }
 
+bool SparcAsmParser::parseExprWithSpecifier(const MCExpr *&Res, SMLoc &E) {
+  SMLoc Loc = getLoc();
+  if (getLexer().getKind() != AsmToken::Identifier)
+    return TokError("expected '%' relocation specifier");
+  auto Spec = Sparc::parseDataSpecifier(Parser.getTok().getIdentifier());
+  if (!Spec)
+    return TokError("invalid relocation specifier");
+
+  Parser.Lex();
+  if (parseToken(AsmToken::LParen, "expected '('"))
+    return true;
+
+  const MCExpr *SubExpr;
+  if (Parser.parseParenExpression(SubExpr, E))
+    return true;
+  Res = MCSpecifierExpr::create(SubExpr, Spec, getContext(), Loc);
+  return false;
+}
+
+bool SparcAsmParser::parseDataExpr(const MCExpr *&Res) {
+  SMLoc EndLoc;
+  if (parseOptionalToken(AsmToken::Percent))
+    return parseExprWithSpecifier(Res, EndLoc);
+  return Parser.parseExpression(Res);
+}
+
 bool SparcAsmParser::isPossibleExpression(const AsmToken &Token) {
   switch (Token.getKind()) {
   case AsmToken::LParen:
@@ -1746,7 +1811,8 @@ bool SparcAsmParser::isPossibleExpression(const AsmToken &Token) {
   }
 }
 
-extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSparcAsmParser() {
+extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
+LLVMInitializeSparcAsmParser() {
   RegisterMCAsmParser<SparcAsmParser> A(getTheSparcTarget());
   RegisterMCAsmParser<SparcAsmParser> B(getTheSparcV9Target());
   RegisterMCAsmParser<SparcAsmParser> C(getTheSparcelTarget());

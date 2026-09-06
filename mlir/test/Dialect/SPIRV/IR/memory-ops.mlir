@@ -35,6 +35,17 @@ func.func @access_chain_2D_array_2(%arg0 : i32) -> () {
   return
 }
 
+//===----------------------------------------------------------------------===//
+// spirv.InBoundsAccessChain
+//===----------------------------------------------------------------------===//
+
+func.func @inbounds_access_chain(%arg0 : i32) -> () {
+  %0 = spirv.Variable : !spirv.ptr<!spirv.array<4xf32>, Function>
+  // CHECK: spirv.InBoundsAccessChain {{.*}}[{{.*}}] : !spirv.ptr<!spirv.array<4 x f32>, Function>
+  %1 = spirv.InBoundsAccessChain %0[%arg0] : !spirv.ptr<!spirv.array<4xf32>, Function>, i32 -> !spirv.ptr<f32, Function>
+  return
+}
+
 func.func @access_chain_rtarray(%arg0 : i32) -> () {
   %0 = spirv.Variable : !spirv.ptr<!spirv.rtarray<f32>, Function>
   // CHECK: spirv.AccessChain {{.*}}[{{.*}}] : !spirv.ptr<!spirv.rtarray<f32>, Function>
@@ -352,6 +363,16 @@ spirv.module Logical GLSL450 {
     %3 = spirv.Load "UniformConstant" %2 : !spirv.sampled_image<!spirv.image<f32, Dim2D, IsDepth, Arrayed, SingleSampled, NeedSampler, Unknown>>
     spirv.Return
   }
+}
+
+// -----
+
+// CHECK-LABEL: @image_load
+func.func @image_load() -> () {
+  %0 = spirv.Variable : !spirv.ptr<!spirv.image<f32, Dim2D, NoDepth, NonArrayed, SingleSampled, NoSampler, Rgba8>, Function>
+  // CHECK: spirv.Load "Function" %{{.*}} : !spirv.image<f32, Dim2D, NoDepth, NonArrayed, SingleSampled, NoSampler, Rgba8>
+  %1 = spirv.Load "Function" %0 : !spirv.image<f32, Dim2D, NoDepth, NonArrayed, SingleSampled, NoSampler, Rgba8>
+  return
 }
 
 // -----

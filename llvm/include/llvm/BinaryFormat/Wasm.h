@@ -81,6 +81,15 @@ enum : unsigned {
   WASM_TYPE_NORESULT = 0x40, // for blocks with no result values
 };
 
+// Memory ordering encodings for atomic instructions.
+enum : unsigned {
+  WASM_MEM_ORDER_SEQ_CST = 0x00,
+  WASM_MEM_ORDER_ACQ_REL = 0x01,
+  // RMW/CMPXCHG operations have 2 orderings but they must currently match.
+  WASM_MEM_ORDER_RMW_ACQ_REL = 0x11,
+};
+const unsigned WASM_MEMARG_HAS_MEM_ORDER = 0x10;
+
 // Kinds of externals (for imports and exports).
 enum : unsigned {
   WASM_EXTERNAL_FUNCTION = 0x0,
@@ -242,6 +251,7 @@ const unsigned WASM_SYMBOL_VISIBILITY_MASK = 0xc;
 const unsigned WASM_SYMBOL_BINDING_GLOBAL = 0x0;
 const unsigned WASM_SYMBOL_BINDING_WEAK = 0x1;
 const unsigned WASM_SYMBOL_BINDING_LOCAL = 0x2;
+const unsigned WASM_SYMBOL_BINDING_COMMON = 0x3;
 const unsigned WASM_SYMBOL_VISIBILITY_DEFAULT = 0x0;
 const unsigned WASM_SYMBOL_VISIBILITY_HIDDEN = 0x4;
 const unsigned WASM_SYMBOL_UNDEFINED = 0x10;
@@ -253,7 +263,7 @@ const unsigned WASM_SYMBOL_ABSOLUTE = 0x200;
 
 #define WASM_RELOC(name, value) name = value,
 
-enum : unsigned {
+enum WasmRelocType : unsigned {
 #include "WasmRelocs.def"
 };
 
@@ -447,11 +457,18 @@ struct WasmDataReference {
   uint64_t Size;
 };
 
+struct WasmCommonReference {
+  uint64_t Size;
+  uint32_t Alignment;
+};
+
 struct WasmRelocation {
   uint8_t Type;    // The type of the relocation.
   uint32_t Index;  // Index into either symbol or type index space.
   uint64_t Offset; // Offset from the start of the section.
   int64_t Addend;  // A value to add to the symbol.
+
+  WasmRelocType getType() const { return static_cast<WasmRelocType>(Type); }
 };
 
 struct WasmInitFunc {
@@ -475,6 +492,8 @@ struct WasmSymbolInfo {
     uint32_t ElementIndex;
     // For a data symbols, the address of the data relative to segment.
     WasmDataReference DataRef;
+    // For common symbols, the size and alignment.
+    WasmCommonReference CommonRef;
   };
 };
 
@@ -508,8 +527,8 @@ struct WasmSignature {
   // but does not actually model them. Instead a placeholder signature is
   // created in the Object's signature list.
   enum { Function, Tag, Placeholder } Kind = Function;
-  // Support empty and tombstone instances, needed by DenseMap.
-  enum { Plain, Empty, Tombstone } State = Plain;
+  // Support empty instances, needed by DenseMap.
+  enum { Plain, Empty } State = Plain;
 
   WasmSignature(SmallVector<ValType, 1> &&InReturns,
                 SmallVector<ValType, 4> &&InParams)

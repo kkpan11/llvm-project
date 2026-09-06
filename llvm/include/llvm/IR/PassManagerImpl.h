@@ -22,8 +22,6 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/PrettyStackTrace.h"
 
-LLVM_ABI extern llvm::cl::opt<bool> UseNewDbgInfoFormat;
-
 namespace llvm {
 
 template <typename IRUnitT, typename AnalysisManagerT, typename... ExtraArgTs>
@@ -64,10 +62,6 @@ PreservedAnalyses PassManager<IRUnitT, AnalysisManagerT, ExtraArgTs...>::run(
   PassInstrumentation PI =
       detail::getAnalysisResult<PassInstrumentationAnalysis>(
           AM, IR, std::tuple<ExtraArgTs...>(ExtraArgs...));
-
-  // RemoveDIs: if requested, convert debug-info to DbgRecord representation
-  // for duration of these passes.
-  ScopedDbgInfoFormatSetter FormatSetter(IR, UseNewDbgInfoFormat);
 
   StackTraceEntry Entry(PI, IR);
   for (auto &Pass : Passes) {
@@ -151,7 +145,8 @@ AnalysisManager<IRUnitT, ExtraArgTs...>::getResultImpl(
     }
 
     AnalysisResultListT &ResultList = AnalysisResultLists[&IR];
-    ResultList.emplace_back(ID, P.run(IR, *this, ExtraArgs...));
+    ResultList.emplace_back(
+        ID, P.run(IR, *this, std::forward<ExtraArgTs>(ExtraArgs)...));
 
     PI.runAfterAnalysis(P, IR);
 

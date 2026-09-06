@@ -13,21 +13,28 @@
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
+#include "mlir/Dialect/OpenMP/Utils/Utils.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllTranslations.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
-#include "mlir/Target/LLVMIR/Import.h"
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Module.h"
 #include "llvm/TargetParser/Host.h"
 
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticIDs.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/CIR/CIRDataLayoutSpec.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
 #include "clang/CIR/Dialect/Passes.h"
+#include "clang/CIR/InitAllDialects.h"
 #include "clang/CIR/LowerToLLVM.h"
 #include "clang/CIR/MissingFeatures.h"
 
@@ -82,12 +89,19 @@ llvm::LogicalResult prepareCIRModuleDataLayout(mlir::ModuleOp mod,
 
   // Data layout is fully determined by the target triple. Here we only pass the
   // triple to get the data layout.
+  llvm::IntrusiveRefCntPtr<clang::DiagnosticIDs> diagID(
+      new clang::DiagnosticIDs);
+  clang::DiagnosticOptions diagOpts;
+  llvm::IntrusiveRefCntPtr<clang::DiagnosticsEngine> diagnostics =
+      new clang::DiagnosticsEngine(diagID, diagOpts,
+                                   new clang::IgnoringDiagConsumer());
   llvm::Triple triple(rawTriple);
+  // TODO: Need to set various target options later to populate
+  // 'TargetInfo' properly.
   clang::TargetOptions targetOptions;
   targetOptions.Triple = rawTriple;
-  // FIXME: AllocateTarget is a big deal. Better make it a global state.
-  std::unique_ptr<clang::TargetInfo> targetInfo =
-      clang::targets::AllocateTarget(llvm::Triple(rawTriple), targetOptions);
+  llvm::IntrusiveRefCntPtr<clang::TargetInfo> targetInfo =
+      clang::TargetInfo::CreateTargetInfo(*diagnostics, targetOptions);
   if (!targetInfo) {
     mod.emitError() << "error: invalid target triple '" << rawTriple << "'\n";
     return llvm::failure();
@@ -95,11 +109,10 @@ llvm::LogicalResult prepareCIRModuleDataLayout(mlir::ModuleOp mod,
   std::string layoutString = targetInfo->getDataLayoutString();
 
   // Registered dialects may not be loaded yet, ensure they are.
-  context->loadDialect<mlir::DLTIDialect, mlir::LLVM::LLVMDialect>();
+  context->loadDialect<mlir::DLTIDialect, mlir::LLVM::LLVMDialect,
+                       mlir::omp::OpenMPDialect>();
 
-  mlir::DataLayoutSpecInterface dlSpec =
-      mlir::translateDataLayout(llvm::DataLayout(layoutString), context);
-  mod->setAttr(mlir::DLTIDialect::kDataLayoutAttrName, dlSpec);
+  cir::setMLIRDataLayout(mod, llvm::DataLayout(layoutString));
 
   return llvm::success();
 }
@@ -146,15 +159,19 @@ void registerToLLVMTranslation() {
           return mlir::failure();
 
         llvm::LLVMContext llvmContext;
+        const bool enableOpenMP = mlir::omp::isOpenMPModule(cirModule);
         std::unique_ptr<llvm::Module> llvmModule =
-            cir::direct::lowerDirectlyFromCIRToLLVMIR(cirModule, llvmContext);
+            cir::direct::lowerDirectlyFromCIRToLLVMIR(cirModule, llvmContext,
+                                                      enableOpenMP);
         if (!llvmModule)
           return mlir::failure();
+        llvmModule->renumberMetadataForAssembly();
         llvmModule->print(output, nullptr);
         return mlir::success();
       },
       [](mlir::DialectRegistry &registry) {
-        registry.insert<mlir::DLTIDialect, mlir::func::FuncDialect>();
+        cir::registerAllDialects(registry);
+        registry.insert<mlir::func::FuncDialect>();
         mlir::registerAllToLLVMIRTranslations(registry);
         cir::direct::registerCIRDialectTranslation(registry);
       });

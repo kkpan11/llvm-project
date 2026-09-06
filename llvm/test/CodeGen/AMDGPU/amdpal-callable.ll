@@ -1,6 +1,6 @@
-; RUN: llc -mtriple=amdgcn--amdpal -mattr=-xnack -verify-machineinstrs < %s | FileCheck -check-prefixes=GCN,SDAG,GFX8 -enable-var-scope %s
-; RUN: llc -mtriple=amdgcn--amdpal -mcpu=gfx900 -mattr=-xnack -verify-machineinstrs < %s | FileCheck -check-prefixes=GCN,SDAG,GFX9 -enable-var-scope %s
-; RUN: llc -global-isel -mtriple=amdgcn--amdpal -mattr=-xnack -mcpu=gfx900 -verify-machineinstrs < %s | FileCheck -check-prefixes=GCN,GISEL,GFX9 -enable-var-scope %s
+; RUN: llc -mtriple=amdgpu6.00--amdpal --amdgpu-xnack=false -mattr=+dx10-clamp-and-ieee-mode < %s | FileCheck -check-prefixes=GCN,SDAG,GFX8 -enable-var-scope %s
+; RUN: llc -mtriple=amdgpu9.00--amdpal --amdgpu-xnack=false < %s | FileCheck -check-prefixes=GCN,SDAG,GFX9 -enable-var-scope %s
+; RUN: llc -global-isel -mtriple=amdgpu9.00--amdpal --amdgpu-xnack=false < %s | FileCheck -check-prefixes=GCN,GISEL,GFX9 -enable-var-scope %s
 
 declare amdgpu_gfx float @extern_func(float) #0
 declare amdgpu_gfx float @extern_func_many_args(<64 x float>) #0
@@ -142,8 +142,7 @@ attributes #0 = { nounwind }
 
 ; GCN: amdpal.pipelines:
 ; GCN-NEXT:  - .registers:
-; GFX8-NEXT:     '0x2e12 (COMPUTE_PGM_RSRC1)': 0xaf010a{{$}}
-; GFX9-NEXT:    '0x2e12 (COMPUTE_PGM_RSRC1)': 0xaf014a{{$}}
+; GCN-NEXT:      '0x2e12 (COMPUTE_PGM_RSRC1)': 0xaf01ca{{$}}
 ; GCN-NEXT:      '0x2e13 (COMPUTE_PGM_RSRC2)': 0x8001{{$}}
 ; GCN-NEXT:    .shader_functions:
 ; GCN-NEXT:      dynamic_stack:
@@ -156,21 +155,19 @@ attributes #0 = { nounwind }
 ; GCN-NEXT:      dynamic_stack_loop:
 ; GCN-NEXT:        .backend_stack_size: 0x10{{$}}
 ; GCN-NEXT:        .lds_size:       0{{$}}
-; SDAG-NEXT:        .sgpr_count:     0x25{{$}}
-; GISEL-NEXT:        .sgpr_count:     0x26{{$}}
+; GCN-NEXT:        .sgpr_count:     0x25{{$}}
 ; GCN-NEXT:        .stack_frame_size_in_bytes: 0x10{{$}}
-; SDAG-NEXT:        .vgpr_count:     0x3{{$}}
-; GISEL-NEXT:        .vgpr_count:     0x4{{$}}
+; GCN-NEXT:        .vgpr_count:     0x3{{$}}
 ; GCN-NEXT:      multiple_stack:
 ; GCN-NEXT:        .backend_stack_size: 0x24{{$}}
 ; GCN-NEXT:        .lds_size:       0{{$}}
-; GCN-NEXT:        .sgpr_count:     0x1{{$}}
+; GCN-NEXT:        .sgpr_count:     0x21{{$}}
 ; GCN-NEXT:        .stack_frame_size_in_bytes: 0x24{{$}}
 ; GCN-NEXT:        .vgpr_count:     0x3{{$}}
 ; GCN-NEXT:      no_stack:
 ; GCN-NEXT:        .backend_stack_size: 0{{$}}
 ; GCN-NEXT:        .lds_size:       0{{$}}
-; GCN-NEXT:        .sgpr_count:     0x1{{$}}
+; GCN-NEXT:        .sgpr_count:     0x20{{$}}
 ; GCN-NEXT:        .stack_frame_size_in_bytes: 0{{$}}
 ; GCN-NEXT:        .vgpr_count:     0x1{{$}}
 ; GCN-NEXT:      no_stack_call:
@@ -203,7 +200,7 @@ attributes #0 = { nounwind }
 ; GCN-NEXT:      simple_lds:
 ; GCN-NEXT:        .backend_stack_size: 0{{$}}
 ; GCN-NEXT:        .lds_size:       0x100{{$}}
-; GCN-NEXT:        .sgpr_count:     0x1{{$}}
+; GCN-NEXT:        .sgpr_count:     0x20{{$}}
 ; GCN-NEXT:        .stack_frame_size_in_bytes: 0{{$}}
 ; GCN-NEXT:        .vgpr_count:     0x1{{$}}
 ; GCN-NEXT:      simple_lds_recurse:
@@ -215,7 +212,7 @@ attributes #0 = { nounwind }
 ; GCN-NEXT:      simple_stack:
 ; GCN-NEXT:        .backend_stack_size: 0x14{{$}}
 ; GCN-NEXT:        .lds_size:       0{{$}}
-; GCN-NEXT:        .sgpr_count:     0x1{{$}}
+; GCN-NEXT:        .sgpr_count:     0x21{{$}}
 ; GCN-NEXT:        .stack_frame_size_in_bytes: 0x14{{$}}
 ; GCN-NEXT:        .vgpr_count:     0x2{{$}}
 ; GCN-NEXT:      simple_stack_call:

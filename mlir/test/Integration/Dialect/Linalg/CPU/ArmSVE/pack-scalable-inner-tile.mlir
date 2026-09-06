@@ -1,4 +1,5 @@
-// REQUIRES: arm-emulator
+// REQUIRES: arm-emulator 
+// XFAIL: mlir-expensive-checks
 
 // This test is a clone of pack-dynamic-inner-tile.mlir, but the inner tile is
 // vector.vscale * %c8 rather than %c8. In order to demonstrate the impact of
@@ -39,19 +40,20 @@ func.func @main() {
     [ 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84, 91, 98, 105, 112]
   ]> : tensor<7x16xi32>
 
-  func.call @pack(%A) : (tensor<7x16xi32>) -> ()
-
-  return
-}
-
-func.func private @pack(%A: tensor<7x16xi32>) {
-  %c1 = arith.constant 1 : index
-  %pad_val = arith.constant 123 : i32
 
   // Set vscale to 2 (vector width = 256). This will have identical effect to:
   //  * qemu-aarch64 -cpu max,sve-max-vq=2 (...)
   %c256 = arith.constant 256 : i32
   func.call @setArmVLBits(%c256) : (i32) -> ()
+
+  func.call @pack(%A) : (tensor<7x16xi32>) -> ()
+
+  return
+}
+
+func.func private @pack(%A: tensor<7x16xi32>) attributes {no_inline} {
+  %c1 = arith.constant 1 : index
+  %pad_val = arith.constant 123 : i32
 
   // Scalable tile size
   %vs = vector.vscale

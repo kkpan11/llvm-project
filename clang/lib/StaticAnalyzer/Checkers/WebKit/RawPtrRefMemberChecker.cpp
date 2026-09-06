@@ -6,8 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ASTUtils.h"
 #include "DiagOutputUtils.h"
 #include "PtrTypesSemantics.h"
+#include "RawPtrRefSafetyModel.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DynamicRecursiveASTVisitor.h"
@@ -28,17 +30,20 @@ class RawPtrRefMemberChecker
 private:
   BugType Bug;
   mutable BugReporter *BR;
+  mutable llvm::DenseSet<const ObjCIvarDecl *> IvarDeclsToIgnore;
 
 protected:
-  mutable std::optional<RetainTypeChecker> RTC;
+  const std::unique_ptr<PtrRefSafetyModel> Model;
 
 public:
-  RawPtrRefMemberChecker(const char *description)
-      : Bug(this, description, "WebKit coding guidelines") {}
+  RawPtrRefMemberChecker(const char *description,
+                         std::unique_ptr<PtrRefSafetyModel> Model)
+      : Bug(this, description, "WebKit coding guidelines"),
+        Model(std::move(Model)) {}
 
-  virtual std::optional<bool> isUnsafePtr(QualType) const = 0;
-  virtual const char *typeName() const = 0;
-  virtual const char *invariant() const = 0;
+  std::optional<bool> isUnsafePtr(QualType QT, bool IgnoreARC = false) const {
+    return isUnsafePtrForStorage(*Model, QT, IgnoreARC);
+  }
 
   void checkASTDecl(const TranslationUnitDecl *TUD, AnalysisManager &MGR,
                     BugReporter &BRArg) const {
@@ -57,8 +62,8 @@ public:
       }
 
       bool VisitTypedefDecl(const TypedefDecl *TD) override {
-        if (Checker->RTC)
-          Checker->RTC->visitTypedef(TD);
+        if (auto *RTC = Checker->Model->retainTypeChecker())
+          RTC->visitTypedef(TD);
         return true;
       }
 
@@ -74,7 +79,7 @@ public:
     };
 
     LocalVisitor visitor(this);
-    if (RTC)
+    if (auto *RTC = Model->retainTypeChecker())
       RTC->visitTranslationUnitDecl(TUD);
     visitor.TraverseDecl(TUD);
   }
@@ -106,38 +111,26 @@ public:
 
     if (auto *MemberCXXRD = MemberType->getPointeeCXXRecordDecl())
       reportBug(Member, MemberType, MemberCXXRD, RD);
-    else if (auto *ObjCDecl = getObjCDecl(MemberType))
+    else if (auto *ObjCDecl = getObjCDeclFromObjCPtr(MemberType))
       reportBug(Member, MemberType, ObjCDecl, RD);
-  }
-
-  ObjCInterfaceDecl *getObjCDecl(const Type *TypePtr) const {
-    auto *PointeeType = TypePtr->getPointeeType().getTypePtrOrNull();
-    if (!PointeeType)
-      return nullptr;
-    auto *Desugared = PointeeType->getUnqualifiedDesugaredType();
-    if (!Desugared)
-      return nullptr;
-    auto *ObjCType = dyn_cast<ObjCInterfaceType>(Desugared);
-    if (!ObjCType)
-      return nullptr;
-    return ObjCType->getDecl();
   }
 
   void visitObjCDecl(const ObjCContainerDecl *CD) const {
     if (BR->getSourceManager().isInSystemHeader(CD->getLocation()))
       return;
 
-    ObjCContainerDecl::PropertyMap map;
-    CD->collectPropertiesToImplement(map);
-    for (auto it : map)
-      visitObjCPropertyDecl(CD, it.second);
-
-    if (auto *ID = dyn_cast<ObjCInterfaceDecl>(CD)) {
-      for (auto *Ivar : ID->ivars())
-        visitIvarDecl(CD, Ivar);
-      return;
-    }
     if (auto *ID = dyn_cast<ObjCImplementationDecl>(CD)) {
+      ObjCContainerDecl::PropertyMap map;
+      CD->collectPropertiesToImplement(map);
+      for (auto it : map)
+        visitObjCPropertyDecl(CD, it.second);
+
+      if (auto *Interface = ID->getClassInterface()) {
+        for (auto *Ivar : Interface->ivars())
+          visitIvarDecl(CD, Ivar);
+      }
+      for (auto *PropImpl : ID->property_impls())
+        visitPropImpl(CD, PropImpl);
       for (auto *Ivar : ID->ivars())
         visitIvarDecl(CD, Ivar);
       return;
@@ -148,6 +141,10 @@ public:
                      const ObjCIvarDecl *Ivar) const {
     if (BR->getSourceManager().isInSystemHeader(Ivar->getLocation()))
       return;
+
+    if (IvarDeclsToIgnore.contains(Ivar))
+      return;
+
     auto QT = Ivar->getType();
     const Type *IvarType = QT.getTypePtrOrNull();
     if (!IvarType)
@@ -157,9 +154,11 @@ public:
     if (!IsUnsafePtr || !*IsUnsafePtr)
       return;
 
+    IvarDeclsToIgnore.insert(Ivar);
+
     if (auto *MemberCXXRD = IvarType->getPointeeCXXRecordDecl())
       reportBug(Ivar, IvarType, MemberCXXRD, CD);
-    else if (auto *ObjCDecl = getObjCDecl(IvarType))
+    else if (auto *ObjCDecl = getObjCDeclFromObjCPtr(IvarType))
       reportBug(Ivar, IvarType, ObjCDecl, CD);
   }
 
@@ -167,19 +166,66 @@ public:
                              const ObjCPropertyDecl *PD) const {
     if (BR->getSourceManager().isInSystemHeader(PD->getLocation()))
       return;
-    auto QT = PD->getType();
-    const Type *PropType = QT.getTypePtrOrNull();
-    if (!PropType)
-      return;
 
-    auto IsUnsafePtr = isUnsafePtr(QT);
-    if (!IsUnsafePtr || !*IsUnsafePtr)
+    if (const ObjCInterfaceDecl *ID = dyn_cast<ObjCInterfaceDecl>(CD)) {
+      auto *RTC = Model->retainTypeChecker();
+      if (!RTC || !RTC->defaultSynthProperties() ||
+          ID->isObjCRequiresPropertyDefs())
+        return;
+    }
+
+    auto [IsUnsafe, PropType] = isPropImplUnsafePtr(PD);
+    if (!IsUnsafe)
       return;
 
     if (auto *MemberCXXRD = PropType->getPointeeCXXRecordDecl())
       reportBug(PD, PropType, MemberCXXRD, CD);
-    else if (auto *ObjCDecl = getObjCDecl(PropType))
+    else if (auto *ObjCDecl = getObjCDeclFromObjCPtr(PropType))
       reportBug(PD, PropType, ObjCDecl, CD);
+  }
+
+  void visitPropImpl(const ObjCContainerDecl *CD,
+                     const ObjCPropertyImplDecl *PID) const {
+    if (BR->getSourceManager().isInSystemHeader(PID->getLocation()))
+      return;
+
+    if (PID->getPropertyImplementation() != ObjCPropertyImplDecl::Synthesize)
+      return;
+
+    auto *PropDecl = PID->getPropertyDecl();
+    if (auto *IvarDecl = PID->getPropertyIvarDecl()) {
+      if (IvarDeclsToIgnore.contains(IvarDecl))
+        return;
+      IvarDeclsToIgnore.insert(IvarDecl);
+    }
+    auto [IsUnsafe, PropType] = isPropImplUnsafePtr(PropDecl);
+    if (!IsUnsafe)
+      return;
+
+    if (auto *MemberCXXRD = PropType->getPointeeCXXRecordDecl())
+      reportBug(PropDecl, PropType, MemberCXXRD, CD);
+    else if (auto *ObjCDecl = getObjCDeclFromObjCPtr(PropType))
+      reportBug(PropDecl, PropType, ObjCDecl, CD);
+  }
+
+  std::pair<bool, const Type *>
+  isPropImplUnsafePtr(const ObjCPropertyDecl *PD) const {
+    if (!PD)
+      return {false, nullptr};
+
+    auto QT = PD->getType();
+    const Type *PropType = QT.getTypePtrOrNull();
+    if (!PropType)
+      return {false, nullptr};
+
+    // "assign" property doesn't retain even under ARC so treat it as unsafe.
+    bool ignoreARC =
+        !PD->isReadOnly() && PD->getSetterKind() == ObjCPropertyDecl::Assign;
+    bool IsWeak =
+        PD->getPropertyAttributes() & ObjCPropertyAttribute::kind_weak;
+    bool HasSafeAttr = PD->isRetaining() || IsWeak;
+    auto IsUnsafePtr = isUnsafePtr(QT, ignoreARC);
+    return {IsUnsafePtr && *IsUnsafePtr && !HasSafeAttr, PropType};
   }
 
   bool shouldSkipDecl(const RecordDecl *RD) const {
@@ -235,8 +281,9 @@ public:
     } else
       Os << "Member variable ";
     printQuotedName(Os, Member);
-    Os << " in ";
+    Os << " (of ";
     printQuotedQualifiedName(Os, ClassCXXRD);
+    Os << ")";
     if (Member->getType().getTypePtrOrNull() == MemberType)
       Os << " is a ";
     else
@@ -247,21 +294,30 @@ public:
       printQuotedQualifiedName(Os, Typedef->getDecl());
     } else
       printQuotedQualifiedName(Os, Pointee);
-    Os << "; " << invariant() << ".";
 
     PathDiagnosticLocation BSLoc(Member->getSourceRange().getBegin(),
                                  BR->getSourceManager());
     auto Report = std::make_unique<BasicBugReport>(Bug, Os.str(), BSLoc);
     Report->addRange(Member->getSourceRange());
+    if (auto *EnclosingCtx = Member->getDeclContext())
+      Report->setDeclWithIssue(Decl::castFromDeclContext(EnclosingCtx));
     BR->emitReport(std::move(Report));
   }
 
   enum class PrintDeclKind { Pointee, Pointer };
-  virtual PrintDeclKind printPointer(llvm::raw_svector_ostream &Os,
-                                     const Type *T) const {
+  PrintDeclKind printPointer(llvm::raw_svector_ostream &Os,
+                             const Type *T) const {
+    // Retain/OS types are frequently spelled through a typedef (e.g. CFXXXRef);
+    // print the typedef name rather than desugaring to the pointee.
+    if (Model->retainTypeChecker() && !isa<ObjCObjectPointerType>(T) &&
+        T->getAs<TypedefType>()) {
+      Os << Model->typeName() << " ";
+      return PrintDeclKind::Pointer;
+    }
     T = T->getUnqualifiedDesugaredType();
     bool IsPtr = isa<PointerType>(T) || isa<ObjCObjectPointerType>(T);
-    Os << (IsPtr ? "raw pointer" : "reference") << " to " << typeName() << " ";
+    Os << (IsPtr ? "raw pointer" : "reference") << " to " << Model->typeName()
+       << " ";
     return PrintDeclKind::Pointee;
   }
 };
@@ -270,63 +326,24 @@ class NoUncountedMemberChecker final : public RawPtrRefMemberChecker {
 public:
   NoUncountedMemberChecker()
       : RawPtrRefMemberChecker("Member variable is a raw-pointer/reference to "
-                               "reference-countable type") {}
-
-  std::optional<bool> isUnsafePtr(QualType QT) const final {
-    return isUncountedPtr(QT.getCanonicalType());
-  }
-
-  const char *typeName() const final { return "ref-countable type"; }
-
-  const char *invariant() const final {
-    return "member variables must be Ref, RefPtr, WeakRef, or WeakPtr";
-  }
+                               "reference-countable type",
+                               makeRefPtrSafetyModel()) {}
 };
 
 class NoUncheckedPtrMemberChecker final : public RawPtrRefMemberChecker {
 public:
   NoUncheckedPtrMemberChecker()
       : RawPtrRefMemberChecker("Member variable is a raw-pointer/reference to "
-                               "checked-pointer capable type") {}
-
-  std::optional<bool> isUnsafePtr(QualType QT) const final {
-    return isUncheckedPtr(QT.getCanonicalType());
-  }
-
-  const char *typeName() const final { return "CheckedPtr capable type"; }
-
-  const char *invariant() const final {
-    return "member variables must be a CheckedPtr, CheckedRef, WeakRef, or "
-           "WeakPtr";
-  }
+                               "checked-pointer capable type",
+                               makeCheckedPtrSafetyModel()) {}
 };
 
 class NoUnretainedMemberChecker final : public RawPtrRefMemberChecker {
 public:
   NoUnretainedMemberChecker()
       : RawPtrRefMemberChecker("Member variable is a raw-pointer/reference to "
-                               "retainable type") {
-    RTC = RetainTypeChecker();
-  }
-
-  std::optional<bool> isUnsafePtr(QualType QT) const final {
-    return RTC->isUnretained(QT);
-  }
-
-  const char *typeName() const final { return "retainable type"; }
-
-  const char *invariant() const final {
-    return "member variables must be a RetainPtr";
-  }
-
-  PrintDeclKind printPointer(llvm::raw_svector_ostream &Os,
-                             const Type *T) const final {
-    if (!isa<ObjCObjectPointerType>(T) && T->getAs<TypedefType>()) {
-      Os << typeName() << " ";
-      return PrintDeclKind::Pointer;
-    }
-    return RawPtrRefMemberChecker::printPointer(Os, T);
-  }
+                               "retainable type",
+                               makeRetainPtrSafetyModel()) {}
 };
 
 } // namespace

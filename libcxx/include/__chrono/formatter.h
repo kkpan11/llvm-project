@@ -43,19 +43,22 @@
 #  include <__chrono/zoned_time.h>
 #  include <__concepts/arithmetic.h>
 #  include <__concepts/same_as.h>
-#  include <__format/concepts.h>
+#  include <__format/fmt_char_type.h>
 #  include <__format/format_error.h>
 #  include <__format/format_functions.h>
 #  include <__format/format_parse_context.h>
 #  include <__format/formatter.h>
 #  include <__format/parser_std_format_spec.h>
 #  include <__format/write_escaped.h>
+#  include <__iterator/istreambuf_iterator.h>
+#  include <__iterator/ostreambuf_iterator.h>
+#  include <__locale_dir/num.h>
+#  include <__locale_dir/time.h>
 #  include <__memory/addressof.h>
 #  include <__type_traits/is_specialization.h>
 #  include <cmath>
 #  include <ctime>
 #  include <limits>
-#  include <locale>
 #  include <sstream>
 #  include <string_view>
 

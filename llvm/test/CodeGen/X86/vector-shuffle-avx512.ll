@@ -245,9 +245,9 @@ define <16 x float> @expand12(<8 x float> %a) {
 ; CHECK-LABEL: expand12:
 ; CHECK:       # %bb.0:
 ; CHECK-NEXT:    # kill: def $ymm0 killed $ymm0 def $zmm0
-; CHECK-NEXT:    vpmovsxbd {{.*#+}} zmm2 = [0,16,2,16,4,16,6,16,0,16,1,16,2,16,3,16]
-; CHECK-NEXT:    vxorps %xmm1, %xmm1, %xmm1
-; CHECK-NEXT:    vpermt2ps %zmm0, %zmm2, %zmm1
+; CHECK-NEXT:    vxorps %xmm2, %xmm2, %xmm2
+; CHECK-NEXT:    vpmovsxbd {{.*#+}} zmm1 = [0,16,2,16,4,16,6,16,0,16,1,16,2,16,3,16]
+; CHECK-NEXT:    vpermi2ps %zmm0, %zmm2, %zmm1
 ; CHECK-NEXT:    vmovaps %zmm1, %zmm0
 ; CHECK-NEXT:    ret{{[l|q]}}
    %res = shufflevector <8 x float> zeroinitializer, <8 x float> %a, <16 x i32> <i32 0, i32 8, i32 1, i32 8, i32 2, i32 8, i32 3, i32 8,i32 0, i32 8, i32 1, i32 8, i32 2, i32 8, i32 3, i32 8>
@@ -355,7 +355,7 @@ define <32 x i16> @test_mm512_mask_blend_epi16(<32 x i16> %A, <32 x i16> %W){
 ;
 ; AVX512F-LABEL: test_mm512_mask_blend_epi16:
 ; AVX512F:       # %bb.0: # %entry
-; AVX512F-NEXT:    vpternlogd {{.*#+}} zmm0 = zmm0 ^ (mem & (zmm0 ^ zmm1))
+; AVX512F-NEXT:    vpternlogd {{.*#+}} zmm0 = zmm0 ^ (m32bcst & (zmm0 ^ zmm1))
 ; AVX512F-NEXT:    ret{{[l|q]}}
 entry:
   %0 = shufflevector <32 x i16> %A, <32 x i16> %W, <32 x i32>  <i32 32, i32 1, i32 34, i32 3, i32 36, i32 5, i32 38, i32 7, i32 40, i32 9, i32 42, i32 11, i32 44, i32 13, i32 46, i32 15, i32 48, i32 17, i32 50, i32 19, i32 52, i32 21, i32 54, i32 23, i32 56, i32 25, i32 58, i32 27, i32 60, i32 29, i32 62, i32 31>

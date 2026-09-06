@@ -11,32 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "SparcMCExpr.h"
+#include "MCTargetDesc/SparcMCAsmInfo.h"
 #include "llvm/BinaryFormat/ELF.h"
-#include "llvm/MC/MCAssembler.h"
-#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCObjectStreamer.h"
-#include "llvm/MC/MCValue.h"
 
 using namespace llvm;
 
 #define DEBUG_TYPE "sparcmcexpr"
 
-const SparcMCExpr *SparcMCExpr::create(uint16_t S, const MCExpr *Expr,
-                                       MCContext &Ctx) {
-  return new (Ctx) SparcMCExpr(S, Expr);
-}
-
-void SparcMCExpr::printImpl(raw_ostream &OS, const MCAsmInfo *MAI) const {
-  StringRef S = getSpecifierName(specifier);
-  if (!S.empty())
-    OS << '%' << S << '(';
-  getSubExpr()->print(OS, MAI);
-  if (!S.empty())
-    OS << ')';
-}
-
-StringRef SparcMCExpr::getSpecifierName(uint16_t S) {
+StringRef Sparc::getSpecifierName(uint16_t S) {
   // clang-format off
   switch (uint16_t(S)) {
   case 0:                          return {};
@@ -83,7 +66,7 @@ StringRef SparcMCExpr::getSpecifierName(uint16_t S) {
   llvm_unreachable("Unhandled SparcMCExpr::Specifier");
 }
 
-uint16_t SparcMCExpr::parseSpecifier(StringRef name) {
+uint16_t Sparc::parseSpecifier(StringRef name) {
   return StringSwitch<uint16_t>(name)
       .Case("lo", ELF::R_SPARC_LO10)
       .Case("hi", ELF::R_SPARC_HI22)
@@ -102,7 +85,6 @@ uint16_t SparcMCExpr::parseSpecifier(StringRef name) {
       .Case("got22", ELF::R_SPARC_GOT22)
       .Case("got10", ELF::R_SPARC_GOT10)
       .Case("got13", ELF::R_SPARC_GOT13)
-      .Case("r_disp32", ELF::R_SPARC_DISP32)
       .Case("tgd_hi22", ELF::R_SPARC_TLS_GD_HI22)
       .Case("tgd_lo10", ELF::R_SPARC_TLS_GD_LO10)
       .Case("tgd_add", ELF::R_SPARC_TLS_GD_ADD)
@@ -129,20 +111,8 @@ uint16_t SparcMCExpr::parseSpecifier(StringRef name) {
       .Default(0);
 }
 
-uint16_t SparcMCExpr::getFixupKind() const {
-  assert(uint16_t(specifier) < FirstTargetFixupKind);
-  return specifier;
-}
-
-bool SparcMCExpr::evaluateAsRelocatableImpl(MCValue &Res,
-                                            const MCAssembler *Asm) const {
-  if (!getSubExpr()->evaluateAsRelocatable(Res, Asm))
-    return false;
-
-  Res.setSpecifier(specifier);
-  return true;
-}
-
-void SparcMCExpr::visitUsedExpr(MCStreamer &Streamer) const {
-  Streamer.visitUsedExpr(*getSubExpr());
+uint16_t Sparc::parseDataSpecifier(StringRef name) {
+  return StringSwitch<uint16_t>(name)
+      .Case("r_disp32", ELF::R_SPARC_DISP32)
+      .Default(0);
 }

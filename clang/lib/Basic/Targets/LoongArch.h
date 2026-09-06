@@ -25,6 +25,7 @@ class LLVM_LIBRARY_VISIBILITY LoongArchTargetInfo : public TargetInfo {
 protected:
   std::string ABI;
   std::string CPU;
+  bool HasFeature32S;
   bool HasFeatureD;
   bool HasFeatureF;
   bool HasFeatureLSX;
@@ -39,6 +40,7 @@ protected:
 public:
   LoongArchTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
       : TargetInfo(Triple) {
+    HasFeature32S = false;
     HasFeatureD = false;
     HasFeatureF = false;
     HasFeatureLSX = false;
@@ -49,6 +51,9 @@ public:
     HasFeatureLD_SEQ_SA = false;
     HasFeatureDiv32 = false;
     HasFeatureSCQ = false;
+    BFloat16Width = 16;
+    BFloat16Align = 16;
+    BFloat16Format = &llvm::APFloat::BFloat();
     LongDoubleWidth = 128;
     LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::IEEEquad();
@@ -57,9 +62,10 @@ public:
     SuitableAlign = 128;
     WCharType = SignedInt;
     WIntType = UnsignedInt;
+    BitIntMaxAlign = 128;
   }
 
-  bool setCPU(const std::string &Name) override {
+  bool setCPU(StringRef Name) override {
     if (!isValidCPUName(Name))
       return false;
     CPU = Name;
@@ -81,6 +87,11 @@ public:
 
   std::string_view getClobbers() const override { return ""; }
 
+  StringRef getConstraintRegister(StringRef Constraint,
+                                  StringRef Expression) const override {
+    return Expression;
+  }
+
   ArrayRef<const char *> getGCCRegNames() const override;
 
   int getEHDataRegisterNumber(unsigned RegNo) const override {
@@ -99,7 +110,7 @@ public:
 
   bool hasBitIntType() const override { return true; }
 
-  bool useFP16ConversionIntrinsics() const override { return false; }
+  bool hasBFloat16Type() const override { return true; }
 
   bool handleTargetFeatures(std::vector<std::string> &Features,
                             DiagnosticsEngine &Diags) override;
@@ -127,9 +138,9 @@ public:
     IntPtrType = SignedInt;
     PtrDiffType = SignedInt;
     SizeType = UnsignedInt;
-    resetDataLayout("e-m:e-p:32:32-i64:64-n32-S128");
     // TODO: select appropriate ABI.
     setABI("ilp32d");
+    resetDataLayout();
   }
 
   bool setABI(const std::string &Name) override {
@@ -152,9 +163,9 @@ public:
     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
     IntMaxType = Int64Type = SignedLong;
     HasUnalignedAccess = true;
-    resetDataLayout("e-m:e-p:64:64-i64:64-i128:128-n32:64-S128");
     // TODO: select appropriate ABI.
     setABI("lp64d");
+    resetDataLayout();
   }
 
   bool setABI(const std::string &Name) override {

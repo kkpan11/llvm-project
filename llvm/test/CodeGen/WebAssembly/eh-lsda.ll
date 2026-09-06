@@ -66,9 +66,9 @@ try.cont:                                         ; preds = %entry, %catch.start
 
 ; CHECK-LABEL: test1:
 ; In static linking, we load GCC_except_table as a constant directly.
-; NOPIC:      i[[PTR]].const  $push[[CONTEXT:.*]]=, __wasm_lpad_context
+; NOPIC:      i[[PTR]].const  $push[[CONTEXT:.*]]=, {{[48]}}
 ; NOPIC-NEXT: i[[PTR]].const  $push[[EXCEPT_TABLE:.*]]=, GCC_except_table1
-; NOPIC-NEXT: i[[PTR]].store  {{[48]}}($pop[[CONTEXT]]), $pop[[EXCEPT_TABLE]]
+; NOPIC-NEXT: i[[PTR]].store  __wasm_lpad_context($pop[[CONTEXT]]), $pop[[EXCEPT_TABLE]]
 
 ; In case of PIC, we make GCC_except_table symbols a relative on based on
 ; __memory_base.
@@ -251,6 +251,6 @@ declare i32 @llvm.wasm.get.ehselector(token) #0
 declare void @__cxa_rethrow()
 declare ptr @__cxa_begin_catch(ptr)
 declare void @__cxa_end_catch()
-declare i32 @__gxx_wasm_personality_v0(...)
+declare i32 @__gxx_wasm_personality_v0(ptr)
 
 attributes #0 = { nounwind }

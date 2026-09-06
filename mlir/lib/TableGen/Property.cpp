@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/TableGen/Property.h"
-#include "mlir/TableGen/Format.h"
 #include "mlir/TableGen/Operator.h"
 #include "mlir/TableGen/Predicate.h"
 #include "llvm/TableGen/Record.h"
@@ -105,10 +104,33 @@ Pred Property::getPredicate() const {
   return Pred(maybePred->getValue());
 }
 
+bool Property::usesDefaultParser() const {
+  const Record *propertyClass = def->getRecords().getClass("Property");
+  if (const auto *baseInit =
+          llvm::dyn_cast<DefInit>(def->getValueInit("baseProperty"))) {
+    Property baseProperty(baseInit);
+    if (getParserCall() == baseProperty.getParserCall())
+      return baseProperty.usesDefaultParser();
+  }
+  // RecordVal retains the source location of the initializer that supplied a
+  // field. An inherited parser therefore points at Property::parser, while an
+  // explicit `let parser` points at the override without inspecting its text.
+  return def->getValue("parser")->getLoc().getPointer() ==
+         propertyClass->getValue("parser")->getLoc().getPointer();
+}
+
 Property Property::getBaseProperty() const {
   if (const auto *defInit =
           llvm::dyn_cast<llvm::DefInit>(def->getValueInit("baseProperty"))) {
     return Property(defInit).getBaseProperty();
   }
   return *this;
+}
+
+bool Property::isSubClassOf(StringRef className) const {
+  return def && def->isSubClassOf(className);
+}
+
+StringRef ConstantProp::getValue() const {
+  return def->getValueAsString("value");
 }

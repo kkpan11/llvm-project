@@ -108,8 +108,7 @@ struct MutableBoxReallocation {
 /// is an ExtendedValue for the storage pointer.
 /// For example, when genReallocIfNeeded() is used for a LHS allocatable
 /// array in an assignment, the callback performs the actual assignment
-/// via the given storage pointer, so we end up generating array_updates and
-/// array_merge_stores in each branch.
+/// via the given storage pointer, in each branch.
 using ReallocStorageHandlerFunc = std::function<void(fir::ExtendedValue)>;
 
 MutableBoxReallocation
@@ -180,6 +179,18 @@ mlir::Value genIsNotAllocatedOrAssociatedTest(fir::FirOpBuilder &builder,
 /// Return address of the temporary storage.
 mlir::Value genNullBoxStorage(fir::FirOpBuilder &builder, mlir::Location loc,
                               mlir::Type boxTy);
+
+/// Generate an unallocated box of the given \p boxTy with the
+/// bounds, type parameters, and dynamic type set according to the
+/// parameters.
+/// \p shape may be null for scalars, and \p polymorphicMold may be null for
+/// statically typed entities. This box can then be directly passed to the
+/// runtime for allocation.
+mlir::Value getAndEstablishBoxStorage(fir::FirOpBuilder &builder,
+                                      mlir::Location loc,
+                                      fir::BaseBoxType boxTy, mlir::Value shape,
+                                      llvm::ArrayRef<mlir::Value> typeParams,
+                                      mlir::Value polymorphicMold);
 
 } // namespace fir::factory
 

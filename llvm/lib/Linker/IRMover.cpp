@@ -8,9 +8,9 @@
 
 #include "llvm/Linker/IRMover.h"
 #include "LinkDiagnosticInfo.h"
-#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/AutoUpgrade.h"
 #include "llvm/IR/Constants.h"
@@ -27,7 +27,6 @@
 #include "llvm/IR/TypeFinder.h"
 #include "llvm/Object/ModuleSymbolTable.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/Path.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include <optional>
@@ -293,6 +292,9 @@ class IRLinker {
   Module &DstM;
   std::unique_ptr<Module> SrcM;
 
+  // Lookup table to optimize IRMover::linkNamedMDNodes().
+  IRMover::NamedMDNodesT &NamedMDNodes;
+
   /// See IRMover::move().
   IRMover::LazyCallback AddLazyFor;
 
@@ -438,11 +440,15 @@ public:
   IRLinker(Module &DstM, MDMapT &SharedMDs,
            IRMover::IdentifiedStructTypeSet &Set, std::unique_ptr<Module> SrcM,
            ArrayRef<GlobalValue *> ValuesToLink,
-           IRMover::LazyCallback AddLazyFor, bool IsPerformingImport)
-      : DstM(DstM), SrcM(std::move(SrcM)), AddLazyFor(std::move(AddLazyFor)),
-        TypeMap(Set), GValMaterializer(*this), LValMaterializer(*this),
-        SharedMDs(SharedMDs), IsPerformingImport(IsPerformingImport),
-        Mapper(ValueMap, RF_ReuseAndMutateDistinctMDs | RF_IgnoreMissingLocals,
+           IRMover::LazyCallback AddLazyFor, bool IsPerformingImport,
+           IRMover::NamedMDNodesT &NamedMDNodes)
+      : DstM(DstM), SrcM(std::move(SrcM)), NamedMDNodes(NamedMDNodes),
+        AddLazyFor(std::move(AddLazyFor)), TypeMap(Set),
+        GValMaterializer(*this), LValMaterializer(*this), SharedMDs(SharedMDs),
+        IsPerformingImport(IsPerformingImport),
+        Mapper(ValueMap,
+               RF_ReuseAndMutateDistinctMDs | RF_IgnoreMissingLocals |
+                   (IsPerformingImport ? RF_Importing : RF_None),
                &TypeMap, &GValMaterializer),
         IndirectSymbolMCID(Mapper.registerAlternateMappingContext(
             IndirectSymbolValueMap, &LValMaterializer)) {
@@ -597,7 +603,6 @@ Function *IRLinker::copyFunctionProto(const Function *SF) {
                              SF->getAddressSpace(), SF->getName(), &DstM);
   F->copyAttributesFrom(SF);
   F->setAttributes(mapAttributeTypes(F->getContext(), F->getAttributes()));
-  F->IsNewDbgInfoFormat = SF->IsNewDbgInfoFormat;
   return F;
 }
 
@@ -879,10 +884,7 @@ IRLinker::linkAppendingVarProto(GlobalVariable *DstGV,
   NG->copyAttributesFrom(SrcGV);
   forceRenaming(NG, SrcGV->getName());
 
-  Mapper.scheduleMapAppendingVariable(
-      *NG,
-      (DstGV && !DstGV->isDeclaration()) ? DstGV->getInitializer() : nullptr,
-      IsOldStructor, SrcElements);
+  Mapper.scheduleMapAppendingVariable(*NG, DstGV, IsOldStructor, SrcElements);
 
   // Replace any uses of the two global variables with uses of the new
   // global.
@@ -943,6 +945,16 @@ Expected<Constant *> IRLinker::linkGlobalValueProto(GlobalValue *SGV,
   GlobalValue *NewGV;
   if (DGV && !ShouldLink) {
     NewGV = DGV;
+
+    // If the source is an exact definition, optimizations may have modified
+    // its attributes, e.g. by dropping noundef attributes when replacing
+    // arguments with poison. In this case, it is important for correctness
+    // that we use the signature from the exact definition.
+    if (isa<Function>(SGV) && DGV->isDeclaration() &&
+        SGV->hasExactDefinition() && !DoneLinkingBodies) {
+      NewGV = copyGlobalValueProto(SGV, /*ForDefinition=*/false);
+      NeedsRenaming = true;
+    }
   } else {
     // If we are done linking global value bodies (i.e. we are performing
     // metadata linking), don't link in the global value due to this
@@ -1032,7 +1044,6 @@ Error IRLinker::linkFunctionBody(Function &Dst, Function &Src) {
     Dst.setPrologueData(Src.getPrologueData());
   if (Src.hasPersonalityFn())
     Dst.setPersonalityFn(Src.getPersonalityFn());
-  assert(Src.IsNewDbgInfoFormat == Dst.IsNewDbgInfoFormat);
 
   // Copy over the metadata attachments without remapping.
   Dst.copyMetadata(&Src, 0);
@@ -1137,9 +1148,19 @@ void IRLinker::linkNamedMDNodes() {
       continue;
 
     NamedMDNode *DestNMD = DstM.getOrInsertNamedMetadata(NMD.getName());
+
+    auto &Inserted = NamedMDNodes[DestNMD];
+    if (Inserted.empty()) {
+      // Must be the first module, copy everything from DestNMD.
+      Inserted.insert(DestNMD->operands().begin(), DestNMD->operands().end());
+    }
+
     // Add Src elements into Dest node.
-    for (const MDNode *Op : NMD.operands())
-      DestNMD->addOperand(Mapper.mapMDNode(*Op));
+    for (const MDNode *Op : NMD.operands()) {
+      MDNode *MD = Mapper.mapMDNode(*Op);
+      if (Inserted.insert(MD).second)
+        DestNMD->addOperand(MD);
+    }
   }
 }
 
@@ -1446,9 +1467,6 @@ Error IRLinker::run() {
     if (Error Err = SrcM->getMaterializer()->materializeMetadata())
       return Err;
 
-  // Convert source module to match dest for the duration of the link.
-  ScopedDbgInfoFormatSetter FormatSetter(*SrcM, DstM.IsNewDbgInfoFormat);
-
   // Inherit the target data from the source module if the destination
   // module doesn't have one already.
   if (DstM.getDataLayout().isDefault())
@@ -1503,6 +1521,11 @@ Error IRLinker::run() {
   // Loop over all of the linked values to compute type mappings.
   computeTypeMapping();
 
+  // Convert module level attributes to function level attributes because
+  // after merging modules the attributes might change and would have different
+  // effect on the functions as the original module would have.
+  copyModuleAttrToFunctions(*SrcM);
+
   std::reverse(Worklist.begin(), Worklist.end());
   while (!Worklist.empty()) {
     GlobalValue *GV = Worklist.back();
@@ -1539,8 +1562,11 @@ Error IRLinker::run() {
 
   if (!IsPerformingImport && !SrcM->getModuleInlineAsm().empty()) {
     // Append the module inline asm string.
-    DstM.appendModuleInlineAsm(adjustInlineAsm(SrcM->getModuleInlineAsm(),
-                                               SrcTriple));
+    for (const Module::GlobalAsmFragment &Frag : SrcM->getModuleInlineAsm()) {
+      Module::GlobalAsmFragment NewFrag(Frag);
+      NewFrag.Asm = adjustInlineAsm(NewFrag.Asm, SrcTriple);
+      DstM.appendModuleInlineAsm(std::move(NewFrag));
+    }
   } else if (IsPerformingImport) {
     // Import any symver directives for symbols in DstM.
     ModuleSymbolTable::CollectAsmSymvers(*SrcM,
@@ -1550,7 +1576,7 @@ Error IRLinker::run() {
         S += Name;
         S += ", ";
         S += Alias;
-        DstM.appendModuleInlineAsm(S);
+        DstM.appendModuleInlineAsm(std::string(S));
       }
     });
   }
@@ -1590,14 +1616,6 @@ bool IRMover::StructTypeKeyInfo::KeyTy::operator!=(const KeyTy &That) const {
   return !this->operator==(That);
 }
 
-StructType *IRMover::StructTypeKeyInfo::getEmptyKey() {
-  return DenseMapInfo<StructType *>::getEmptyKey();
-}
-
-StructType *IRMover::StructTypeKeyInfo::getTombstoneKey() {
-  return DenseMapInfo<StructType *>::getTombstoneKey();
-}
-
 unsigned IRMover::StructTypeKeyInfo::getHashValue(const KeyTy &Key) {
   return hash_combine(hash_combine_range(Key.ETypes), Key.IsPacked);
 }
@@ -1608,15 +1626,11 @@ unsigned IRMover::StructTypeKeyInfo::getHashValue(const StructType *ST) {
 
 bool IRMover::StructTypeKeyInfo::isEqual(const KeyTy &LHS,
                                          const StructType *RHS) {
-  if (RHS == getEmptyKey() || RHS == getTombstoneKey())
-    return false;
   return LHS == KeyTy(RHS);
 }
 
 bool IRMover::StructTypeKeyInfo::isEqual(const StructType *LHS,
                                          const StructType *RHS) {
-  if (RHS == getEmptyKey() || RHS == getTombstoneKey())
-    return LHS == RHS;
   return KeyTy(LHS) == KeyTy(RHS);
 }
 
@@ -1668,6 +1682,11 @@ IRMover::IRMover(Module &M) : Composite(M) {
   for (const auto *MD : StructTypes.getVisitedMetadata()) {
     SharedMDs[MD].reset(const_cast<MDNode *>(MD));
   }
+
+  // Convert module level attributes to function level attributes because
+  // after merging modules the attributes might change and would have different
+  // effect on the functions as the original module would have.
+  copyModuleAttrToFunctions(M);
 }
 
 Error IRMover::move(std::unique_ptr<Module> Src,
@@ -1675,6 +1694,6 @@ Error IRMover::move(std::unique_ptr<Module> Src,
                     LazyCallback AddLazyFor, bool IsPerformingImport) {
   IRLinker TheIRLinker(Composite, SharedMDs, IdentifiedStructTypes,
                        std::move(Src), ValuesToLink, std::move(AddLazyFor),
-                       IsPerformingImport);
+                       IsPerformingImport, NamedMDNodes);
   return TheIRLinker.run();
 }

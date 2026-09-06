@@ -44,6 +44,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/RandomNumberGenerator.h"
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/VersionTuple.h"
 #include <cassert>
 #include <cstdint>
@@ -53,8 +54,6 @@
 #include <vector>
 
 using namespace llvm;
-
-LLVM_ABI extern cl::opt<bool> UseNewDbgInfoFormat;
 
 //===----------------------------------------------------------------------===//
 // Methods to implement the globals and functions lists.
@@ -73,8 +72,7 @@ template class LLVM_EXPORT_TEMPLATE llvm::SymbolTableListTraits<GlobalIFunc>;
 
 Module::Module(StringRef MID, LLVMContext &C)
     : Context(C), ValSymTab(std::make_unique<ValueSymbolTable>(-1)),
-      ModuleID(std::string(MID)), SourceFileName(std::string(MID)),
-      IsNewDbgInfoFormat(UseNewDbgInfoFormat) {
+      ModuleID(std::string(MID)), SourceFileName(std::string(MID)) {
   Context.addModule(this);
 }
 
@@ -85,7 +83,6 @@ Module &Module::operator=(Module &&Other) {
 
   ModuleID = std::move(Other.ModuleID);
   SourceFileName = std::move(Other.SourceFileName);
-  IsNewDbgInfoFormat = std::move(Other.IsNewDbgInfoFormat);
 
   GlobalList.clear();
   GlobalList.splice(GlobalList.begin(), Other.GlobalList);
@@ -101,6 +98,11 @@ Module &Module::operator=(Module &&Other) {
 
   NamedMDList.clear();
   NamedMDList.splice(NamedMDList.begin(), Other.NamedMDList);
+  for (NamedMDNode &NMD : NamedMDList)
+    NMD.setParent(this);
+
+  NamedMDSymTab = std::move(Other.NamedMDSymTab);
+  ComdatSymTab = std::move(Other.ComdatSymTab);
   GlobalScopeAsm = std::move(Other.GlobalScopeAsm);
   OwnedMemoryBuffer = std::move(Other.OwnedMemoryBuffer);
   Materializer = std::move(Other.Materializer);
@@ -123,26 +125,30 @@ Module::~Module() {
 }
 
 void Module::removeDebugIntrinsicDeclarations() {
-  auto *DeclareIntrinsicFn =
-      Intrinsic::getOrInsertDeclaration(this, Intrinsic::dbg_declare);
-  assert((!isMaterialized() || DeclareIntrinsicFn->hasZeroLiveUses()) &&
-         "Debug declare intrinsic should have had uses removed.");
-  DeclareIntrinsicFn->eraseFromParent();
-  auto *ValueIntrinsicFn =
-      Intrinsic::getOrInsertDeclaration(this, Intrinsic::dbg_value);
-  assert((!isMaterialized() || ValueIntrinsicFn->hasZeroLiveUses()) &&
-         "Debug value intrinsic should have had uses removed.");
-  ValueIntrinsicFn->eraseFromParent();
-  auto *AssignIntrinsicFn =
-      Intrinsic::getOrInsertDeclaration(this, Intrinsic::dbg_assign);
-  assert((!isMaterialized() || AssignIntrinsicFn->hasZeroLiveUses()) &&
-         "Debug assign intrinsic should have had uses removed.");
-  AssignIntrinsicFn->eraseFromParent();
-  auto *LabelntrinsicFn =
-      Intrinsic::getOrInsertDeclaration(this, Intrinsic::dbg_label);
-  assert((!isMaterialized() || LabelntrinsicFn->hasZeroLiveUses()) &&
-         "Debug label intrinsic should have had uses removed.");
-  LabelntrinsicFn->eraseFromParent();
+  if (auto *DeclareIntrinsicFn =
+          Intrinsic::getDeclarationIfExists(this, Intrinsic::dbg_declare)) {
+    assert((!isMaterialized() || DeclareIntrinsicFn->hasZeroLiveUses()) &&
+           "Debug declare intrinsic should have had uses removed.");
+    DeclareIntrinsicFn->eraseFromParent();
+  }
+  if (auto *ValueIntrinsicFn =
+          Intrinsic::getDeclarationIfExists(this, Intrinsic::dbg_value)) {
+    assert((!isMaterialized() || ValueIntrinsicFn->hasZeroLiveUses()) &&
+           "Debug value intrinsic should have had uses removed.");
+    ValueIntrinsicFn->eraseFromParent();
+  }
+  if (auto *AssignIntrinsicFn =
+          Intrinsic::getDeclarationIfExists(this, Intrinsic::dbg_assign)) {
+    assert((!isMaterialized() || AssignIntrinsicFn->hasZeroLiveUses()) &&
+           "Debug assign intrinsic should have had uses removed.");
+    AssignIntrinsicFn->eraseFromParent();
+  }
+  if (auto *LabelntrinsicFn =
+          Intrinsic::getDeclarationIfExists(this, Intrinsic::dbg_label)) {
+    assert((!isMaterialized() || LabelntrinsicFn->hasZeroLiveUses()) &&
+           "Debug label intrinsic should have had uses removed.");
+    LabelntrinsicFn->eraseFromParent();
+  }
 }
 
 std::unique_ptr<RandomNumberGenerator>
@@ -385,6 +391,11 @@ void Module::addModuleFlag(ModFlagBehavior Behavior, StringRef Key,
   addModuleFlag(Behavior, Key, ConstantAsMetadata::get(Val));
 }
 void Module::addModuleFlag(ModFlagBehavior Behavior, StringRef Key,
+                           uint64_t Val) {
+  Type *Int64Ty = Type::getInt64Ty(Context);
+  addModuleFlag(Behavior, Key, ConstantInt::get(Int64Ty, Val));
+}
+void Module::addModuleFlag(ModFlagBehavior Behavior, StringRef Key,
                            uint32_t Val) {
   Type *Int32Ty = Type::getInt32Ty(Context);
   addModuleFlag(Behavior, Key, ConstantInt::get(Int32Ty, Val));
@@ -402,9 +413,14 @@ void Module::setModuleFlag(ModFlagBehavior Behavior, StringRef Key,
                            Metadata *Val) {
   NamedMDNode *ModFlags = getOrInsertModuleFlagsMetadata();
   // Replace the flag if it already exists.
-  for (MDNode *Flag : ModFlags->operands()) {
+  for (unsigned i = 0; i < ModFlags->getNumOperands(); ++i) {
+    MDNode *Flag = ModFlags->getOperand(i);
     if (cast<MDString>(Flag->getOperand(1))->getString() == Key) {
-      Flag->replaceOperandWith(2, Val);
+      Type *Int32Ty = Type::getInt32Ty(Context);
+      Metadata *Ops[3] = {
+          ConstantAsMetadata::get(ConstantInt::get(Int32Ty, Behavior)),
+          MDString::get(Context, Key), Val};
+      ModFlags->setOperand(i, MDNode::get(Context, Ops));
       return;
     }
   }
@@ -413,6 +429,11 @@ void Module::setModuleFlag(ModFlagBehavior Behavior, StringRef Key,
 void Module::setModuleFlag(ModFlagBehavior Behavior, StringRef Key,
                            Constant *Val) {
   setModuleFlag(Behavior, Key, ConstantAsMetadata::get(Val));
+}
+void Module::setModuleFlag(ModFlagBehavior Behavior, StringRef Key,
+                           uint64_t Val) {
+  Type *Int64Ty = Type::getInt64Ty(Context);
+  setModuleFlag(Behavior, Key, ConstantInt::get(Int64Ty, Val));
 }
 void Module::setModuleFlag(ModFlagBehavior Behavior, StringRef Key,
                            uint32_t Val) {
@@ -478,6 +499,7 @@ Error Module::materializeAll() {
 }
 
 Error Module::materializeMetadata() {
+  llvm::TimeTraceScope timeScope("Materialize metadata");
   if (!Materializer)
     return Error::success();
   return Materializer->materializeMetadata();
@@ -660,6 +682,30 @@ void Module::setCodeModel(CodeModel::Model CL) {
   addModuleFlag(ModFlagBehavior::Error, "Code Model", CL);
 }
 
+LongDoubleFormat Module::getLongDoubleFormat() const {
+  if (auto *Val =
+          dyn_cast_or_null<MDString>(getModuleFlag("long-double-type"))) {
+    if (std::optional<LongDoubleFormat> Format =
+            parseLongDoubleFormat(Val->getString()))
+      return *Format;
+  }
+
+  return getTargetTriple().getDefaultLongDoubleFormat();
+}
+
+void Module::setLongDoubleFormat(LongDoubleFormat Format) {
+  addModuleFlag(ModFlagBehavior::Error, "long-double-type",
+                MDString::get(getContext(), getLongDoubleFormatName(Format)));
+}
+
+FloatABI::ABIType Module::getFloatABI() const {
+  if (auto *Val = dyn_cast_or_null<MDString>(getModuleFlag("float-abi")))
+    return *FloatABI::parseABIType(Val->getString());
+  // Without an explicit flag, fall back to the ABI implied by the target
+  // triple.
+  return getTargetTriple().getDefaultFloatABI();
+}
+
 std::optional<uint64_t> Module::getLargeDataThreshold() const {
   auto *Val =
       cast_or_null<ConstantAsMetadata>(getModuleFlag("Large Data Threshold"));
@@ -748,6 +794,17 @@ void Module::setFramePointer(FramePointerKind Kind) {
   addModuleFlag(ModFlagBehavior::Max, "frame-pointer", static_cast<int>(Kind));
 }
 
+bool Module::hasStackProtectorGuardRecord() const {
+  auto *Val = cast_or_null<ConstantAsMetadata>(
+      getModuleFlag("stack-protector-guard-record"));
+  return Val && cast<ConstantInt>(Val->getValue())->isOne();
+}
+
+void Module::setStackProtectorGuardRecord(bool Flag) {
+  addModuleFlag(ModFlagBehavior::Max, "stack-protector-guard-record",
+                Flag ? 1 : 0);
+}
+
 StringRef Module::getStackProtectorGuard() const {
   Metadata *MD = getModuleFlag("stack-protector-guard");
   if (auto *MDS = dyn_cast_or_null<MDString>(MD))
@@ -793,6 +850,18 @@ int Module::getStackProtectorGuardOffset() const {
 
 void Module::setStackProtectorGuardOffset(int Offset) {
   addModuleFlag(ModFlagBehavior::Error, "stack-protector-guard-offset", Offset);
+}
+
+std::optional<unsigned> Module::getStackProtectorGuardValueWidth() const {
+  Metadata *MD = getModuleFlag("stack-protector-guard-value-width");
+  if (auto *CI = mdconst::dyn_extract_or_null<ConstantInt>(MD))
+    return CI->getZExtValue();
+  return std::nullopt;
+}
+
+void Module::setStackProtectorGuardValueWidth(unsigned Width) {
+  addModuleFlag(ModFlagBehavior::Error, "stack-protector-guard-value-width",
+                Width);
 }
 
 unsigned Module::getOverrideStackAlignment() const {
@@ -920,4 +989,45 @@ StringRef Module::getTargetABIFromMD() {
           dyn_cast_or_null<MDString>(getModuleFlag("target-abi")))
     TargetABI = TargetABIMD->getString();
   return TargetABI;
+}
+
+WinX64EHUnwindMode Module::getWinX64EHUnwindMode() const {
+  // Check the new unified flag first.
+  if (Metadata *MD = getModuleFlag("winx64-eh-unwind")) {
+    if (auto *CI = mdconst::dyn_extract_or_null<ConstantInt>(MD))
+      return static_cast<WinX64EHUnwindMode>(CI->getZExtValue());
+  }
+  // Fall back to the legacy V2 flag.
+  if (Metadata *MD = getModuleFlag("winx64-eh-unwindv2")) {
+    if (auto *CI = mdconst::dyn_extract_or_null<ConstantInt>(MD))
+      return static_cast<WinX64EHUnwindMode>(CI->getZExtValue());
+  }
+  return WinX64EHUnwindMode::V1;
+}
+
+ControlFlowGuardMode Module::getControlFlowGuardMode() const {
+  Metadata *MD = getModuleFlag("cfguard");
+  if (auto *CI = mdconst::dyn_extract_or_null<ConstantInt>(MD))
+    return static_cast<ControlFlowGuardMode>(CI->getZExtValue());
+  return ControlFlowGuardMode::Disabled;
+}
+
+bool Module::GlobalAsmProperties::set(StringRef Name, std::string Value) {
+  if (Name == "target_features")
+    TargetFeatures = std::move(Value);
+  else if (Name == "target_cpu")
+    TargetCPU = std::move(Value);
+  else
+    return false;
+  return true;
+}
+
+SmallVector<std::pair<StringRef, StringRef>>
+Module::GlobalAsmProperties::getAsStrings() const {
+  SmallVector<std::pair<StringRef, StringRef>> Props;
+  if (!TargetFeatures.empty())
+    Props.emplace_back("target_features", TargetFeatures);
+  if (!TargetCPU.empty())
+    Props.emplace_back("target_cpu", TargetCPU);
+  return Props;
 }

@@ -11,42 +11,46 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMMCAsmInfo.h"
-#include "MCTargetDesc/ARMMCExpr.h"
+#include "llvm/ADT/Enum.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
 
-const MCAsmInfo::VariantKindDesc variantKindDescs[] = {
-    {ARMMCExpr::VK_GOT_PREL, "GOT_PREL"},
-    {ARMMCExpr::VK_ARM_NONE, "none"},
-    {ARMMCExpr::VK_PREL31, "prel31"},
-    {ARMMCExpr::VK_SBREL, "sbrel"},
-    {ARMMCExpr::VK_TARGET1, "target1"},
-    {ARMMCExpr::VK_TARGET2, "target2"},
-    {ARMMCExpr::VK_TLSLDO, "TLSLDO"},
-    {MCSymbolRefExpr::VK_COFF_IMGREL32, "imgrel"},
-    {ARMMCExpr::VK_FUNCDESC, "FUNCDESC"},
-    {ARMMCExpr::VK_GOT, "GOT"},
-    {ARMMCExpr::VK_GOTFUNCDESC, "GOTFUNCDESC"},
-    {ARMMCExpr::VK_GOTOFF, "GOTOFF"},
-    {ARMMCExpr::VK_GOTOFFFUNCDESC, "GOTOFFFUNCDESC"},
-    {ARMMCExpr::VK_GOTTPOFF, "GOTTPOFF"},
-    {ARMMCExpr::VK_GOTTPOFF_FDPIC, "gottpoff_fdpic"},
-    {ARMMCExpr::VK_PLT, "PLT"},
-    {MCSymbolRefExpr::VK_SECREL, "SECREL32"},
-    {ARMMCExpr::VK_TLSCALL, "tlscall"},
-    {ARMMCExpr::VK_TLSDESC, "tlsdesc"},
-    {ARMMCExpr::VK_TLSGD, "TLSGD"},
-    {ARMMCExpr::VK_TLSGD_FDPIC, "tlsgd_fdpic"},
-    {ARMMCExpr::VK_TLSLDM, "TLSLDM"},
-    {ARMMCExpr::VK_TLSLDM_FDPIC, "tlsldm_fdpic"},
-    {ARMMCExpr::VK_TPOFF, "TPOFF"},
+constexpr EnumStringDef<MCAsmInfo::AtSpecifierKind> AtSpecifierDefs[] = {
+    {{"GOT_PREL"}, ARM::S_GOT_PREL},
+    {{"none"}, ARM::S_ARM_NONE},
+    {{"prel31"}, ARM::S_PREL31},
+    {{"sbrel"}, ARM::S_SBREL},
+    {{"target1"}, ARM::S_TARGET1},
+    {{"target2"}, ARM::S_TARGET2},
+    {{"TLSLDO"}, ARM::S_TLSLDO},
+    {{"imgrel"}, MCSymbolRefExpr::VK_COFF_IMGREL32},
+    {{"FUNCDESC"}, ARM::S_FUNCDESC},
+    {{"GOT"}, ARM::S_GOT},
+    {{"GOTFUNCDESC"}, ARM::S_GOTFUNCDESC},
+    {{"GOTOFF"}, ARM::S_GOTOFF},
+    {{"GOTOFFFUNCDESC"}, ARM::S_GOTOFFFUNCDESC},
+    {{"GOTTPOFF"}, ARM::S_GOTTPOFF},
+    {{"gottpoff_fdpic"}, ARM::S_GOTTPOFF_FDPIC},
+    {{"PLT"}, ARM::S_PLT},
+    {{"SECREL32"}, ARM::S_COFF_SECREL},
+    {{"tlscall"}, ARM::S_TLSCALL},
+    {{"tlsdesc"}, ARM::S_TLSDESC},
+    {{"TLSGD"}, ARM::S_TLSGD},
+    {{"tlsgd_fdpic"}, ARM::S_TLSGD_FDPIC},
+    {{"TLSLDM"}, ARM::S_TLSLDM},
+    {{"tlsldm_fdpic"}, ARM::S_TLSLDM_FDPIC},
+    {{"TPOFF"}, ARM::S_TPOFF},
 };
+constexpr auto atSpecifiers = BUILD_ENUM_STRINGS(AtSpecifierDefs);
 
 void ARMMCAsmInfoDarwin::anchor() { }
 
-ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin(const Triple &TheTriple) {
+ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin(const Triple &TheTriple,
+                                       const MCTargetOptions &Options)
+    : MCAsmInfoDarwin(Options) {
   if ((TheTriple.getArch() == Triple::armeb) ||
       (TheTriple.getArch() == Triple::thumbeb))
     IsLittleEndian = false;
@@ -65,12 +69,14 @@ ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin(const Triple &TheTriple) {
                        ? ExceptionHandling::SjLj
                        : ExceptionHandling::DwarfCFI;
 
-  initializeVariantKinds(variantKindDescs);
+  initializeAtSpecifiers(atSpecifiers);
 }
 
 void ARMELFMCAsmInfo::anchor() { }
 
-ARMELFMCAsmInfo::ARMELFMCAsmInfo(const Triple &TheTriple) {
+ARMELFMCAsmInfo::ARMELFMCAsmInfo(const Triple &TheTriple,
+                                 const MCTargetOptions &Options)
+    : MCAsmInfoELF(Options) {
   if ((TheTriple.getArch() == Triple::armeb) ||
       (TheTriple.getArch() == Triple::thumbeb))
     IsLittleEndian = false;
@@ -96,11 +102,10 @@ ARMELFMCAsmInfo::ARMELFMCAsmInfo(const Triple &TheTriple) {
     break;
   }
 
+  initializeAtSpecifiers(atSpecifiers);
   // foo(plt) instead of foo@plt
   UseAtForSpecifier = false;
   UseParensForSpecifier = true;
-
-  initializeVariantKinds(variantKindDescs);
 }
 
 void ARMELFMCAsmInfo::setUseIntegratedAssembler(bool Value) {
@@ -115,41 +120,100 @@ void ARMELFMCAsmInfo::setUseIntegratedAssembler(bool Value) {
 
 void ARMCOFFMCAsmInfoMicrosoft::anchor() { }
 
-ARMCOFFMCAsmInfoMicrosoft::ARMCOFFMCAsmInfoMicrosoft() {
+ARMCOFFMCAsmInfoMicrosoft::ARMCOFFMCAsmInfoMicrosoft(
+    const MCTargetOptions &Options)
+    : MCAsmInfoMicrosoft(Options) {
   AlignmentIsInBytes = false;
   SupportsDebugInformation = true;
   ExceptionsType = ExceptionHandling::WinEH;
   WinEHEncodingType = WinEH::EncodingType::Itanium;
-  PrivateGlobalPrefix = "$M";
-  PrivateLabelPrefix = "$M";
+  InternalSymbolPrefix = "$M";
   CommentString = "@";
 
   // Conditional Thumb 4-byte instructions can have an implicit IT.
   MaxInstLength = 6;
 
-  initializeVariantKinds(variantKindDescs);
+  initializeAtSpecifiers(atSpecifiers);
 }
 
 void ARMCOFFMCAsmInfoGNU::anchor() { }
 
-ARMCOFFMCAsmInfoGNU::ARMCOFFMCAsmInfoGNU() {
+ARMCOFFMCAsmInfoGNU::ARMCOFFMCAsmInfoGNU(const MCTargetOptions &Options)
+    : MCAsmInfoGNUCOFF(Options) {
   AlignmentIsInBytes = false;
   HasSingleParameterDotFile = true;
 
   CommentString = "@";
-  PrivateGlobalPrefix = ".L";
-  PrivateLabelPrefix = ".L";
+  InternalSymbolPrefix = ".L";
 
   SupportsDebugInformation = true;
   ExceptionsType = ExceptionHandling::WinEH;
   WinEHEncodingType = WinEH::EncodingType::Itanium;
-  UseAtForSpecifier = false;
-  UseParensForSpecifier = true;
-
   DwarfRegNumForCFI = false;
 
   // Conditional Thumb 4-byte instructions can have an implicit IT.
   MaxInstLength = 6;
 
-  initializeVariantKinds(variantKindDescs);
+  initializeAtSpecifiers(atSpecifiers);
+  UseAtForSpecifier = false;
+  UseParensForSpecifier = true;
+}
+
+void ARM::printSpecifierExpr(const MCAsmInfo &MAI, raw_ostream &OS,
+                             const MCSpecifierExpr &Expr) {
+  switch (Expr.getSpecifier()) {
+  default:
+    llvm_unreachable("Invalid kind!");
+  case ARM::S_HI16:
+    OS << ":upper16:";
+    break;
+  case ARM::S_LO16:
+    OS << ":lower16:";
+    break;
+  case ARM::S_HI_8_15:
+    OS << ":upper8_15:";
+    break;
+  case ARM::S_HI_0_7:
+    OS << ":upper0_7:";
+    break;
+  case ARM::S_LO_8_15:
+    OS << ":lower8_15:";
+    break;
+  case ARM::S_LO_0_7:
+    OS << ":lower0_7:";
+    break;
+  }
+
+  const MCExpr *Sub = Expr.getSubExpr();
+  if (Sub->getKind() != MCExpr::SymbolRef)
+    OS << '(';
+  MAI.printExpr(OS, *Sub);
+  if (Sub->getKind() != MCExpr::SymbolRef)
+    OS << ')';
+}
+
+const MCSpecifierExpr *ARM::createUpper16(const MCExpr *Expr, MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_HI16, Ctx);
+}
+
+const MCSpecifierExpr *ARM::createLower16(const MCExpr *Expr, MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_LO16, Ctx);
+}
+
+const MCSpecifierExpr *ARM::createUpper8_15(const MCExpr *Expr,
+                                            MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_HI_8_15, Ctx);
+}
+
+const MCSpecifierExpr *ARM::createUpper0_7(const MCExpr *Expr, MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_HI_0_7, Ctx);
+}
+
+const MCSpecifierExpr *ARM::createLower8_15(const MCExpr *Expr,
+                                            MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_LO_8_15, Ctx);
+}
+
+const MCSpecifierExpr *ARM::createLower0_7(const MCExpr *Expr, MCContext &Ctx) {
+  return MCSpecifierExpr::create(Expr, ARM::S_LO_0_7, Ctx);
 }

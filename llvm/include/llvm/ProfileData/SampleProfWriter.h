@@ -12,15 +12,16 @@
 #ifndef LLVM_PROFILEDATA_SAMPLEPROFWRITER_H
 #define LLVM_PROFILEDATA_SAMPLEPROFWRITER_H
 
+#include "llvm/ADT/Eytzinger.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/ProfileSummary.h"
 #include "llvm/ProfileData/SampleProf.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <memory>
-#include <set>
 #include <system_error>
 
 namespace llvm {
@@ -65,7 +66,7 @@ public:
   virtual void Erase(size_t CurrentOutputSize) = 0;
 };
 
-class DefaultFunctionPruningStrategy : public FunctionPruningStrategy {
+class LLVM_ABI DefaultFunctionPruningStrategy : public FunctionPruningStrategy {
   std::vector<NameFunctionSamples> SortedFunctions;
 
 public:
@@ -86,7 +87,7 @@ public:
 };
 
 /// Sample-based profile writer. Base class.
-class SampleProfileWriter {
+class LLVM_ABI SampleProfileWriter {
 public:
   virtual ~SampleProfileWriter() = default;
 
@@ -129,6 +130,15 @@ public:
   virtual void setUseMD5() {}
   virtual void setPartialProfile() {}
   virtual void setUseCtxSplitLayout() {}
+  virtual void setUseMD5ProfileSymbolList() {}
+  virtual void setUseMD5IndexedTables() {}
+
+  void setFormatVersion(uint64_t V) {
+    assert(sampleprof::formatVersionIsSupported(V) &&
+           "Unsupported format version");
+    FormatVersion = V;
+  }
+  uint64_t getFormatVersion() const { return FormatVersion; }
 
 protected:
   SampleProfileWriter(std::unique_ptr<raw_ostream> &OS)
@@ -160,10 +170,13 @@ protected:
 
   /// Profile format.
   SampleProfileFormat Format = SPF_None;
+
+  /// Format version to write.
+  uint64_t FormatVersion = sampleprof::DefaultVersion;
 };
 
 /// Sample-based profile writer (text format).
-class SampleProfileWriterText : public SampleProfileWriter {
+class LLVM_ABI SampleProfileWriterText : public SampleProfileWriter {
 public:
   std::error_code writeSample(const FunctionSamples &S) override;
 
@@ -176,9 +189,7 @@ protected:
     return sampleprof_error::success;
   }
 
-  void setUseCtxSplitLayout() override {
-    MarkFlatProfiles = true;
-  }
+  void setUseCtxSplitLayout() override { MarkFlatProfiles = true; }
 
 private:
   /// Indent level to use when writing.
@@ -192,13 +203,13 @@ private:
   /// cannot be skipped.
   bool MarkFlatProfiles = false;
 
-  friend ErrorOr<std::unique_ptr<SampleProfileWriter>>
+  LLVM_ABI friend ErrorOr<std::unique_ptr<SampleProfileWriter>>
   SampleProfileWriter::create(std::unique_ptr<raw_ostream> &OS,
                               SampleProfileFormat Format);
 };
 
 /// Sample-based profile writer (binary format).
-class SampleProfileWriterBinary : public SampleProfileWriter {
+class LLVM_ABI SampleProfileWriterBinary : public SampleProfileWriter {
 public:
   SampleProfileWriterBinary(std::unique_ptr<raw_ostream> &OS)
       : SampleProfileWriter(OS) {}
@@ -214,17 +225,22 @@ protected:
   virtual std::error_code writeContextIdx(const SampleContext &Context);
   std::error_code writeNameIdx(FunctionId FName);
   std::error_code writeBody(const FunctionSamples &S);
-  inline void stablizeNameTable(MapVector<FunctionId, uint32_t> &NameTable,
-                                std::set<FunctionId> &V);
-  
+
   MapVector<FunctionId, uint32_t> NameTable;
-  
+
   void addName(FunctionId FName);
   virtual void addContext(const SampleContext &Context);
   void addNames(const FunctionSamples &S);
 
+  /// Write \p CallsiteTypeMap to the output stream \p OS.
+  std::error_code
+  writeCallsiteVTableProf(const CallsiteTypeMap &CallsiteTypeMap,
+                          raw_ostream &OS);
+
+  bool WriteVTableProf = false;
+
 private:
-  friend ErrorOr<std::unique_ptr<SampleProfileWriter>>
+  LLVM_ABI friend ErrorOr<std::unique_ptr<SampleProfileWriter>>
   SampleProfileWriter::create(std::unique_ptr<raw_ostream> &OS,
                               SampleProfileFormat Format);
 };
@@ -250,22 +266,27 @@ const std::array<SmallVector<SecHdrTableEntry, 8>, NumOfLayout>
                                           {SecProfileSymbolList, 0, 0, 0, 0},
                                           {SecFuncMetadata, 0, 0, 0, 0}}),
         // CtxSplitLayout
-        SmallVector<SecHdrTableEntry, 8>({{SecProfSummary, 0, 0, 0, 0},
-                                          {SecNameTable, 0, 0, 0, 0},
-                                          // profile with inlined functions
-                                          // for next two sections
-                                          {SecFuncOffsetTable, 0, 0, 0, 0},
-                                          {SecLBRProfile, 0, 0, 0, 0},
-                                          // profile without inlined functions
-                                          // for next two sections
-                                          {SecFuncOffsetTable, 0, 0, 0, 0},
-                                          {SecLBRProfile, 0, 0, 0, 0},
-                                          {SecProfileSymbolList, 0, 0, 0, 0},
-                                          {SecFuncMetadata, 0, 0, 0, 0}}),
+        SmallVector<SecHdrTableEntry, 8>(
+            {{SecProfSummary, 0, 0, 0, 0},
+             {SecNameTable, 0, 0, 0, 0},
+             // profile with inlined functions
+             // for next two sections
+             {SecFuncOffsetTable, 0, 0, 0, 0},
+             {SecLBRProfile, 0, 0, 0, 0},
+             // profile without inlined functions
+             // for next two sections
+             {SecFuncOffsetTable,
+              static_cast<uint64_t>(SecCommonFlags::SecFlagFlat), 0, 0, 0},
+             {SecLBRProfile, static_cast<uint64_t>(SecCommonFlags::SecFlagFlat),
+              0, 0, 0},
+             {SecProfileSymbolList, 0, 0, 0, 0},
+             {SecFuncMetadata, 0, 0, 0, 0}}),
 };
 
-class SampleProfileWriterExtBinaryBase : public SampleProfileWriterBinary {
+class LLVM_ABI SampleProfileWriterExtBinaryBase
+    : public SampleProfileWriterBinary {
   using SampleProfileWriterBinary::SampleProfileWriterBinary;
+
 public:
   std::error_code write(const SampleProfileMap &ProfileMap) override;
 
@@ -297,6 +318,10 @@ public:
     resetSecLayout(SectionLayout::CtxSplitLayout);
   }
 
+  void setUseMD5ProfileSymbolList() override { UseMD5ProfSymList = true; }
+
+  void setUseMD5IndexedTables() override { UseMD5IndexedTables = true; }
+
   void resetSecLayout(SectionLayout SL) {
     verifySecLayout(SL);
 #ifndef NDEBUG
@@ -321,11 +346,6 @@ protected:
         addSecFlag(Entry, Flag);
     }
   }
-  template <class SecFlagType>
-  void addSectionFlag(uint32_t SectionIdx, SecFlagType Flag) {
-    addSecFlag(SectionHdrLayout[SectionIdx], Flag);
-  }
-
   void addContext(const SampleContext &Context) override;
 
   // placeholder for subclasses to dispatch their own section writers.
@@ -336,9 +356,12 @@ protected:
   // specify the order to write sections.
   virtual std::error_code writeSections(const SampleProfileMap &ProfileMap) = 0;
 
-  // Dispatch section writer for each section. \p LayoutIdx is the sequence
-  // number indicating where the section is located in SectionHdrLayout.
-  virtual std::error_code writeOneSection(SecType Type, uint32_t LayoutIdx,
+  // Find the first unwritten entry in SectionHdrLayout matching Type, returning
+  // its layout index.
+  unsigned findUnwrittenEntry(SecType Type);
+
+  // Dispatch section writer for each section.
+  virtual std::error_code writeOneSection(SecType Type,
                                           const SampleProfileMap &ProfileMap);
 
   // Helper function to write name table.
@@ -352,8 +375,14 @@ protected:
 
   // Functions to write various kinds of sections.
   std::error_code writeNameTableSection(const SampleProfileMap &ProfileMap);
-  std::error_code writeFuncOffsetTable();
+  std::error_code
+  writeEytzingerNameTableSection(const SampleProfileMap &ProfileMap);
+  std::error_code writeFuncOffsetTable(bool IsNested);
+  std::error_code writeEytzingerFuncOffsetTable(bool IsNested);
+  std::error_code writeLegacyFuncOffsetTable();
   std::error_code writeProfileSymbolListSection();
+  std::error_code writeStringBasedProfileSymbolListSection();
+  std::error_code writeMD5ProfileSymbolListSection();
 
   SectionLayout SecLayout = DefaultLayout;
   // Specifiy the order of sections in section header table. Note
@@ -399,6 +428,14 @@ private:
   MapVector<SampleContext, uint64_t> FuncOffsetTable;
   // Whether to use MD5 to represent string.
   bool UseMD5 = false;
+  // Whether to write the profile symbol list as 64-bit MD5 hashes in Eytzinger
+  // layout.
+  bool UseMD5ProfSymList = false;
+  // Whether to write MD5-based indexed NameTable and parallel FuncOffsetTable
+  // in Eytzinger layout.
+  bool UseMD5IndexedTables = false;
+  size_t NumNested = 0;
+  size_t NumFlat = 0;
 
   /// CSNameTable maps function context to its offset in SecCSNameTable section.
   /// The offset will be used everywhere where the context is referenced.
@@ -407,10 +444,10 @@ private:
   ProfileSymbolList *ProfSymList = nullptr;
 };
 
-class SampleProfileWriterExtBinary : public SampleProfileWriterExtBinaryBase {
+class LLVM_ABI SampleProfileWriterExtBinary
+    : public SampleProfileWriterExtBinaryBase {
 public:
-  SampleProfileWriterExtBinary(std::unique_ptr<raw_ostream> &OS)
-      : SampleProfileWriterExtBinaryBase(OS) {}
+  SampleProfileWriterExtBinary(std::unique_ptr<raw_ostream> &OS);
 
 private:
   std::error_code writeDefaultLayout(const SampleProfileMap &ProfileMap);

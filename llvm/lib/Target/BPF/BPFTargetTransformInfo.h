@@ -21,7 +21,7 @@
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 namespace llvm {
-class BPFTTIImpl : public BasicTTIImplBase<BPFTTIImpl> {
+class BPFTTIImpl final : public BasicTTIImplBase<BPFTTIImpl> {
   typedef BasicTTIImplBase<BPFTTIImpl> BaseT;
   typedef TargetTransformInfo TTI;
   friend BaseT;
@@ -77,10 +77,11 @@ public:
     TTI::MemCmpExpansionOptions Options;
     Options.LoadSizes = {8, 4, 2, 1};
     Options.MaxNumLoads = TLI->getMaxExpandSizeMemcmp(OptSize);
+    // Group byte loads into a native-width value before comparing. This keeps
+    // the number of branches bounded when wide misaligned loads are split.
+    Options.NumLoadsPerBlock = 8;
     return Options;
   }
-
-  unsigned getMaxNumArgs() const override { return 5; }
 };
 
 } // end namespace llvm

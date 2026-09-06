@@ -1,4 +1,4 @@
-//===--- UseStartsEndsWithCheck.cpp - clang-tidy --------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -20,18 +20,19 @@ using namespace clang::ast_matchers;
 namespace clang::tidy::modernize {
 
 static bool isNegativeComparison(const Expr *ComparisonExpr) {
-  if (const auto *Op = llvm::dyn_cast<BinaryOperator>(ComparisonExpr))
+  if (const auto *Op = dyn_cast<BinaryOperator>(ComparisonExpr))
     return Op->getOpcode() == BO_NE;
 
-  if (const auto *Op = llvm::dyn_cast<CXXOperatorCallExpr>(ComparisonExpr))
+  if (const auto *Op = dyn_cast<CXXOperatorCallExpr>(ComparisonExpr))
     return Op->getOperator() == OO_ExclaimEqual;
 
-  if (const auto *Op =
-          llvm::dyn_cast<CXXRewrittenBinaryOperator>(ComparisonExpr))
+  if (const auto *Op = dyn_cast<CXXRewrittenBinaryOperator>(ComparisonExpr))
     return Op->getOperator() == BO_NE;
 
   return false;
 }
+
+namespace {
 
 struct NotLengthExprForStringNode {
   NotLengthExprForStringNode(std::string ID, DynTypedNode Node,
@@ -68,8 +69,7 @@ struct NotLengthExprForStringNode {
           return true;
         }
 
-        if (const auto *OnNode =
-                dyn_cast<Expr>(MemberCallNode->getImplicitObjectArgument())) {
+        if (const Expr *OnNode = MemberCallNode->getImplicitObjectArgument()) {
           return !utils::areStatementsIdentical(OnNode->IgnoreParenImpCasts(),
                                                 ExprNode->IgnoreParenImpCasts(),
                                                 *Context);
@@ -88,8 +88,10 @@ private:
 
 AST_MATCHER_P(Expr, lengthExprForStringNode, std::string, ID) {
   return Builder->removeBindings(NotLengthExprForStringNode(
-      ID, DynTypedNode::create(Node), &(Finder->getASTContext())));
+      ID, DynTypedNode::create(Node), &Finder->getASTContext()));
 }
+
+} // namespace
 
 UseStartsEndsWithCheck::UseStartsEndsWithCheck(StringRef Name,
                                                ClangTidyContext *Context)
@@ -243,8 +245,9 @@ void UseStartsEndsWithCheck::check(const MatchFinder::MatchResult &Result) {
       CharSourceRange::getTokenRange(SearchExpr->getSourceRange()),
       *Result.SourceManager, Result.Context->getLangOpts());
 
-  auto Diagnostic = diag(FindExpr->getExprLoc(), "use %0 instead of %1")
-                    << ReplacementFunction->getName() << FindFun->getName();
+  const auto Diagnostic = diag(FindExpr->getExprLoc(), "use %0 instead of %1")
+                          << ReplacementFunction->getName()
+                          << FindFun->getName();
 
   // Remove everything before the function call.
   Diagnostic << FixItHint::CreateRemoval(CharSourceRange::getCharRange(

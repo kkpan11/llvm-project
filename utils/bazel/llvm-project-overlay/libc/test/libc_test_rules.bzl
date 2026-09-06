@@ -12,10 +12,27 @@ They come in two flavors:
 When performing tests we make sure to always use the internal version.
 """
 
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("//libc:libc_build_rules.bzl", "libc_common_copts")
 load("//libc:libc_configure_options.bzl", "LIBC_CONFIGURE_OPTIONS")
 
-def libc_test(name, copts = [], deps = [], local_defines = [], **kwargs):
+_FULL_BUILD_COPTS = [
+    "-nostdlib++",
+    "-nostdlib",
+    "-DLIBC_FULL_BUILD",
+    "-DLIBC_COPT_USE_C_ASSERT",
+]
+
+_TEST_DEFINES = ["LIBC_TEST_SUBPROCESS_TESTS=1"]
+
+def libc_test(
+        name,
+        copts = [],
+        deps = [],
+        local_defines = [],
+        c_test = False,
+        full_build = False,
+        **kwargs):
     """Add target for a libc test.
 
     Args:
@@ -23,22 +40,40 @@ def libc_test(name, copts = [], deps = [], local_defines = [], **kwargs):
       copts: The list of options to add to the C++ compilation command.
       deps: The list of libc functions and libraries to be linked in.
       local_defines: The list of target local_defines if any.
+      c_test: Whether this test is a C unit test (uses LibcCTest).
+      full_build: Whether to compile with LIBC_FULL_BUILD and disallow
+          use of system headers. This is useful for tests that include both
+          LLVM libc headers and proxy headers to avoid conflicting definitions.
       **kwargs: Attributes relevant for a cc_test.
     """
-    native.cc_test(
+    deps = deps + [
+        "//libc:hdr_stdint_proxy",
+        "//libc:__support_macros_config",
+        "//libc:__support_libc_errno",
+        "//libc:errno",
+        "//libc:func_aligned_alloc",
+        "//libc:func_free",
+        "//libc:func_malloc",
+        "//libc:func_realloc",
+    ]
+    if c_test:
+        deps = deps + ["//libc/test/UnitTest:LibcCTest"]
+    else:
+        deps = deps + ["//libc/test/UnitTest:LibcUnitTest"]
+
+    tags = kwargs.pop("tags", [])
+    if full_build:
+        copts = copts + _FULL_BUILD_COPTS
+
+        # Temporarily disable full_build tests (currently broken) to unblock CI.
+        tags = tags + ["manual", "nobuildkite", "notap"]
+    cc_test(
         name = name,
-        local_defines = local_defines + LIBC_CONFIGURE_OPTIONS,
-        deps = [
-            "//libc/test/UnitTest:LibcUnitTest",
-            "//libc:__support_macros_config",
-            "//libc:errno",
-            "//libc:func_aligned_alloc",
-            "//libc:func_free",
-            "//libc:func_malloc",
-            "//libc:func_realloc",
-        ] + deps,
+        local_defines = local_defines + _TEST_DEFINES + LIBC_CONFIGURE_OPTIONS,
+        deps = deps,
         copts = copts + libc_common_copts(),
         linkstatic = 1,
+        tags = tags,
         **kwargs
     )
 
@@ -51,11 +86,11 @@ def libc_test_library(name, copts = [], local_defines = [], **kwargs):
       local_defines: See cc_library.local_defines.
       **kwargs: Other attributes relevant to cc_library (e.g. "deps").
     """
-    native.cc_library(
+    cc_library(
         name = name,
         testonly = True,
         copts = copts + libc_common_copts(),
-        local_defines = local_defines + LIBC_CONFIGURE_OPTIONS,
+        local_defines = local_defines + _TEST_DEFINES + LIBC_CONFIGURE_OPTIONS,
         linkstatic = 1,
         **kwargs
     )

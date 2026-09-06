@@ -24,7 +24,7 @@ namespace NS {
 #pragma acc routine(NS::templ) seq
 
 // expected-error@+2{{use of undeclared identifier 'templ'; did you mean 'NS::templ'?}}
-// expected-error@+1{{OpenACC routine name 'NS::templ' names a set of overloads}}
+// expected-error@+1{{OpenACC routine name 'NS::templ<int>' names a set of overloads}}
 #pragma acc routine(templ<int>) seq
 // expected-error@+1{{OpenACC routine name 'NS::templ<int>' names a set of overloads}}
 #pragma acc routine(NS::templ<int>) seq
@@ -58,3 +58,10 @@ void foo() {
   auto y = [](){};
 #pragma acc routine (x) seq
 }
+
+struct GH214195 {
+  void foo() {
+#pragma acc cache(bar })
+    // expected-error@-1{{use of undeclared identifier 'bar'}}
+  }
+};

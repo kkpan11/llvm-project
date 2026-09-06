@@ -22,6 +22,7 @@ include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 
 def ArmSVE_Dialect : Dialect {
   let name = "arm_sve";
+  let useStrictPropertiesInAssemblyFormat = 1;
   let cppNamespace = "::mlir::arm_sve";
   let summary = "Basic dialect to target Arm SVE architectures";
   let description = [{
@@ -81,10 +82,11 @@ class ArmSVE_IntrOp<string mnemonic,
                     list<int> overloadedResults = [],
                     int numResults = 1,
                     list<int> immArgPositions = [],
-                    list<string> immArgAttrNames = []> :
+                    list<string> immArgAttrNames = [],
+                    string enumName = "aarch64_sve_" # !subst(".", "_", mnemonic) > :
   LLVM_IntrOpBase</*Dialect dialect=*/ArmSVE_Dialect,
                   /*string opName=*/"intr." # mnemonic,
-                  /*string enumName=*/"aarch64_sve_" # !subst(".", "_", mnemonic),
+                  /*string enumName=*/enumName,
                   /*list<int> overloadedResults=*/overloadedResults,
                   /*list<int> overloadedOperands=*/overloadedOperands,
                   /*list<Trait> traits=*/traits,
@@ -92,6 +94,7 @@ class ArmSVE_IntrOp<string mnemonic,
                   /*bit requiresAccessGroup=*/0,
                   /*bit requiresAliasAnalysis=*/0,
                   /*bit requiresFastmath=*/0,
+                  /*bit requiresArgAndResultAttrs=*/0,
                   /*bit requiresOpBundles=*/0,
                   /*list<int> immArgPositions=*/immArgPositions,
                   /*list<string> immArgAttrNames=*/immArgAttrNames>;
@@ -291,6 +294,41 @@ def UsmmlaOp : ArmSVE_Op<"usmmla", [Pure,
   let results = (outs ScalableVectorOfLengthAndType<[4], [I32]>:$dst);
   let assemblyFormat =
     "$acc `,` $src1 `,` $src2 attr-dict `:` type($src1) `to` type($dst)";
+}
+
+def BfmmlaOp : ArmSVE_IntrOp<"bfmmla", [Pure,
+                                        AllTypesMatch<["src1", "src2"]>,
+                                        AllTypesMatch<["acc", "res"]>,
+                                        ],
+                                        /*overloadedOperands=*/[1],
+                                        /*overloadedResults=*/[0],
+                                        /*numResults=*/1,
+                                        /*immArgPositions=*/[],
+                                        /*immArgAttrNames=*/[],
+                                        /*enumName=*/"aarch64_sve_fmmla"> {
+  let summary = "BFloat16 matrix multiply-accumulate";
+  let description = [{
+    BFMMLA: BFloat16 matrix multiply-accumulate into 2×2 matrices.
+
+    This operation multiplies the 2x4 BFloat16 matrix held in each 128-bit
+    segment of the first source vector by the 4x2 BFloat16 matrix in the
+    corresponding segment of the second source vector, then accumulates
+    this intermediate result with the 2x2 Float32 matrix in the corresponding
+    segment of the accumulator vector, yielding the final 2x2 Float32
+    segment of the result.
+
+    Source:
+    https://developer.arm.com/documentation/100987/0000
+  }];
+  // Supports (vector<[8]xbf16>, vector<[8]xbf16>) -> (vector<[4]xf32>)
+  let arguments = (ins
+          ScalableVectorOfLengthAndType<[4], [F32]>:$acc,
+          ScalableVectorOfLengthAndType<[8], [BF16]>:$src1,
+          ScalableVectorOfLengthAndType<[8], [BF16]>:$src2
+  );
+  let results = (outs ScalableVectorOfLengthAndType<[4], [F32]>:$res);
+  let assemblyFormat =
+    "$acc `,` $src1 `,` $src2 attr-dict `:` type($src1) `to` type($res)";
 }
 
 class SvboolTypeConstraint<string lhsArg, string rhsArg> : TypesMatchWith<
@@ -560,7 +598,7 @@ def DupQLaneOp : ArmSVE_Op<"dupq_lane", [Pure, AllTypesMatch<["src", "dst"]>]> {
     // %V = [A B C D E F H A B C D E F H]
     ```
 
-    Note: The semantics of the operation match those of the `svdupq_lane` instrinsics.
+    Note: The semantics of the operation match those of the `svdupq_lane` intrinsics.
     [Source](https://developer.arm.com/architectures/instruction-sets/intrinsics/#q=svdupq_lane)
   }];
 
@@ -671,7 +709,7 @@ def ZipX4IntrOp : ArmSVE_IntrOp<"zip.x4",
 // Note: This intrinsic requires SME or SVE2.1.
 def PselIntrOp : ArmSVE_IntrOp<"psel",
   /*traits=*/[Pure, TypeIs<"res", SVBool>],
-  /*overloadedOperands=*/[1]>,
+  /*overloadedOperands=*/[0,1]>,
   Arguments<(ins Arg<SVBool, "p1">:$p1,
                  Arg<SVEPredicate, "p2">:$p2,
                  Arg<I32, "index">:$index)>;

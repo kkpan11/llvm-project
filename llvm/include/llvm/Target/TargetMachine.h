@@ -13,12 +13,14 @@
 #ifndef LLVM_TARGET_TARGETMACHINE_H
 #define LLVM_TARGET_TARGETMACHINE_H
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/PGOOptions.h"
 #include "llvm/Target/CGPassBuilderOption.h"
@@ -28,15 +30,16 @@
 #include <string>
 #include <utility>
 
-extern llvm::cl::opt<bool> NoKernelInfoEndLTO;
-
 namespace llvm {
+
+LLVM_ABI extern llvm::cl::opt<bool> NoKernelInfoEndLTO;
 
 class AAManager;
 using ModulePassManager = PassManager<Module>;
 
 class Function;
 class GlobalValue;
+class MachineInstr;
 class MachineModuleInfoWrapperPass;
 struct MachineSchedContext;
 class Mangler;
@@ -78,7 +81,7 @@ struct MachineFunctionInfo;
 /// machine.  All target-specific information should be accessible through this
 /// interface.
 ///
-class TargetMachine {
+class LLVM_ABI TargetMachine {
 protected: // Can only create subclasses.
   TargetMachine(const Target &T, StringRef DataLayoutString,
                 const Triple &TargetTriple, StringRef CPU, StringRef FS,
@@ -112,6 +115,9 @@ protected: // Can only create subclasses.
   std::unique_ptr<const MCInstrInfo> MII;
   std::unique_ptr<const MCSubtargetInfo> STI;
 
+  /// MC subtarget keyed by target features and target CPU.
+  StringMap<std::unique_ptr<const MCSubtargetInfo>> MCSubtargetMap;
+
   unsigned RequireStructuredCFG : 1;
   unsigned O0WantsFastISel : 1;
 
@@ -119,7 +125,7 @@ protected: // Can only create subclasses.
   std::optional<PGOOptions> PGOOption;
 
 public:
-  mutable TargetOptions Options;
+  TargetOptions Options;
 
   TargetMachine(const TargetMachine &) = delete;
   void operator=(const TargetMachine &) = delete;
@@ -131,6 +137,16 @@ public:
   StringRef getTargetCPU() const { return TargetCPU; }
   StringRef getTargetFeatureString() const { return TargetFS; }
   void setTargetFeatureString(StringRef FS) { TargetFS = std::string(FS); }
+
+  /// Returns the effective target ABI name: the "target-abi" module flag if
+  /// present, otherwise the -target-abi option. This is a pure query; call
+  /// verifyOptionsConsistency once per module to diagnose a conflict.
+  StringRef getTargetABIName(const Module &M) const;
+
+  /// Diagnoses command-line codegen options that conflict with the
+  /// corresponding module flags (e.g. -target-abi vs the "target-abi" module
+  /// flag). Intended to be called once per module.
+  void verifyOptionsConsistency(const Module &M) const;
 
   /// Virtual method implemented by subclasses that returns a reference to that
   /// target's TargetSubtargetInfo-derived member variable.
@@ -229,17 +245,27 @@ public:
     return DL.getPointerSize(DL.getAllocaAddrSpace());
   }
 
-  /// Reset the target options based on the function's attributes.
-  // FIXME: Remove TargetOptions that affect per-function code generation
-  // from TargetMachine.
-  void resetTargetOptions(const Function &F) const;
-
   /// Return target specific asm information.
-  const MCAsmInfo *getMCAsmInfo() const { return AsmInfo.get(); }
+  const MCAsmInfo &getMCAsmInfo() const { return *AsmInfo; }
 
-  const MCRegisterInfo *getMCRegisterInfo() const { return MRI.get(); }
+  const MCRegisterInfo &getMCRegisterInfo() const { return *MRI; }
   const MCInstrInfo *getMCInstrInfo() const { return MII.get(); }
-  const MCSubtargetInfo *getMCSubtargetInfo() const { return STI.get(); }
+  const MCSubtargetInfo &getMCSubtargetInfo() const { return *STI; }
+
+  /// Get the MCSubtargetInfo for the given target CPU and target features.
+  /// For use in contexts where a feature-specific MC subtarget is needed,
+  /// but no MachineFunctionis available, such as for module-level inline
+  /// assembly.
+  const MCSubtargetInfo &getMCSubtargetInfo(StringRef CPU, StringRef FS);
+
+  /// Return the ExceptionHandling to use, considering TargetOptions and the
+  /// Triple's default.
+  ExceptionHandling getExceptionModel() const {
+    // FIXME: This interface fails to distinguish default from not supported.
+    return Options.ExceptionModel == ExceptionHandling::None
+               ? TargetTriple.getDefaultExceptionHandling()
+               : Options.ExceptionModel;
+  }
 
   bool requiresStructuredCFG() const { return RequireStructuredCFG; }
   void setRequiresStructuredCFG(bool Value) { RequireStructuredCFG = Value; }
@@ -260,6 +286,7 @@ public:
 
   void setLargeDataThreshold(uint64_t LDT) { LargeDataThreshold = LDT; }
   bool isLargeGlobalValue(const GlobalValue *GV) const;
+  bool isLargeDataSize(uint64_t Size) const;
 
   bool isPositionIndependent() const;
 
@@ -295,6 +322,9 @@ public:
   }
   void setSupportsDebugEntryValues(bool Enable) {
     Options.SupportsDebugEntryValues = Enable;
+  }
+  void setEnableDefaultMachineVerifier(bool Enable) {
+    Options.EnableDefaultMachineVerifier = Enable;
   }
 
   void setCFIFixup(bool Enable) { Options.EnableCFIFixup = Enable; }
@@ -445,8 +475,6 @@ public:
   static constexpr unsigned DefaultSjLjDataSize = 32;
   virtual unsigned getSjLjDataSize() const { return DefaultSjLjDataSize; }
 
-  static std::pair<int, int> parseBinutilsVersion(StringRef Version);
-
   /// getAddressSpaceForPseudoSourceKind - Given the kind of memory
   /// (e.g. stack) the target returns the corresponding address space.
   virtual unsigned getAddressSpaceForPseudoSourceKind(unsigned Kind) const {
@@ -474,13 +502,18 @@ public:
     return nullptr;
   }
 
-  virtual Error buildCodeGenPipeline(ModulePassManager &, raw_pwrite_stream &,
-                                     raw_pwrite_stream *, CodeGenFileType,
-                                     const CGPassBuilderOption &,
-                                     PassInstrumentationCallbacks *) {
+  virtual Error
+  buildCodeGenPipeline(ModulePassManager &MPM, ModuleAnalysisManager &MAM,
+                       raw_pwrite_stream &Out, raw_pwrite_stream *DwoOut,
+                       CodeGenFileType FileType, const CGPassBuilderOption &Opt,
+                       MCContext &Ctx, PassInstrumentationCallbacks *PIC) {
     return make_error<StringError>("buildCodeGenPipeline is not overridden",
                                    inconvertibleErrorCode());
   }
+
+  /// Returns true if frontends should default to using the NewPM for this
+  /// specific target.
+  virtual bool shouldDefaultToNewPM() const { return false; }
 
   /// Returns true if the target is expected to pass all machine verifier
   /// checks. This is a stopgap measure to fix targets one by one. We will
@@ -518,6 +551,20 @@ public:
 
   // MachineRegisterInfo callback function
   virtual void registerMachineRegisterInfoCallback(MachineFunction &MF) const {}
+
+  /// Remove all Linker Optimization Hints (LOH) associated with instructions in
+  /// \p MIs and \return the number of hints removed. This is useful in
+  /// transformations that cause these hints to be illegal, like in the machine
+  /// outliner.
+  virtual size_t clearLinkerOptimizationHints(
+      const SmallPtrSetImpl<MachineInstr *> &MIs) const {
+    return 0;
+  }
+
+  /// Returns whether the backend can lower the llvm.cond.loop intrinsic. If
+  /// this function returns false, the intrinsic will be supported generically
+  /// but without loop detection support.
+  virtual bool canLowerCondLoop() const { return false; }
 };
 
 } // end namespace llvm

@@ -299,7 +299,7 @@ func.func @masked_dynamic_vectorize_nd_tensor_extract_with_affine_apply_gather(%
 // CHECK:           %[[VAL_6:.*]] = arith.constant 1 : index
 // CHECK:           %[[VAL_7:.*]] = tensor.dim %[[VAL_2]], %[[VAL_6]] : tensor<?x?xf32>
 // CHECK:           %[[VAL_8:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_9:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[VAL_9:.*]] = ub.poison : f32
 // CHECK:           %[[VAL_10:.*]] = vector.create_mask %[[VAL_5]], %[[VAL_7]] : vector<1x4xi1>
 // CHECK:           %[[VAL_11:.*]] = vector.mask %[[VAL_10]] { vector.transfer_read %[[VAL_2]]{{\[}}%[[VAL_8]], %[[VAL_8]]], %[[VAL_9]] {in_bounds = [true, true]} : tensor<?x?xf32>, vector<1x4xf32> } : vector<1x4xi1> -> vector<1x4xf32>
 // CHECK:           %[[VAL_12:.*]] = vector.step : vector<4xindex>
@@ -356,7 +356,7 @@ func.func @extract_masked_vectorize(%arg0: tensor<?x?xf32>, %arg1: tensor<?x?xf3
 // CHECK:           %[[VAL_6:.*]] = arith.constant 1 : index
 // CHECK:           %[[VAL_7:.*]] = tensor.dim %[[VAL_1]], %[[VAL_6]] : tensor<?x?xf32>
 // CHECK:           %[[VAL_8:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_9:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[VAL_9:.*]] = ub.poison : f32
 // CHECK:           %[[VAL_10:.*]] = vector.create_mask %[[VAL_5]], %[[VAL_7]] : vector<3x3xi1>
 // CHECK:           %[[VAL_11:.*]] = vector.mask %[[VAL_10]] { vector.transfer_read %[[VAL_1]]{{\[}}%[[VAL_8]], %[[VAL_8]]], %[[VAL_9]] {in_bounds = [true, true]} : tensor<?x?xf32>, vector<3x3xf32> } : vector<3x3xi1> -> vector<3x3xf32>
 // CHECK:           %[[VAL_12:.*]] = arith.constant dense<true> : vector<3x3xi1>
@@ -458,7 +458,7 @@ func.func @scalar_broadcast(%init : tensor<1x1x3xi32>, %src: tensor<1x3x2x4xi32>
 // CHECK:           %[[MASK_RES:.*]] = vector.create_mask %[[C1]], %[[C1_2]], %[[C3]] : vector<1x1x4xi1>
 
 /// Read and broadcast the scalar
-// CHECK:           %[[PAD:.*]] = arith.constant 0 : i32
+// CHECK:           %[[PAD:.*]] = ub.poison : i32
 // CHECK:           %[[MASK_READ:.*]] = vector.constant_mask [1] : vector<1xi1>
 // CHECK:           %[[READ:.*]] = vector.mask %[[MASK_READ]] {
 // CHECK-SAME:          vector.transfer_read %[[SRC]]{{\[}}%[[IDX]], %[[IDX]], %[[IDX]], %[[IDX]]],  %[[PAD]]
@@ -476,4 +476,53 @@ module attributes {transform.with_named_sequence} {
     transform.structured.vectorize %0 vector_sizes [1, 1, 4] {vectorize_nd_extract} : !transform.any_op
     transform.yield
   }
+}
+
+// -----
+
+// A contiguous `tensor.extract` from a source whose rank is *smaller* than the
+// iteration space (here: a 1-D source inside a 2-D loop nest). The contiguous
+// `vector.transfer_read` only reads the trailing (contiguous) dim - the leading
+// dim is broadcast via the permutation map - so its mask must be rank-reduced
+// (`vector<4xi1>`) rather than the full iteration-space mask (`vector<1x4xi1>`).
+// Regression test: previously the full iteration mask was attached, producing
+// an invalid `vector.transfer_read` ("inferred mask type ... don't match").
+
+func.func @masked_contiguous_extract_rank_reducing_mask(
+    %src: tensor<16xf32>,
+    %output : tensor<1x3xf32>,
+    %idx: index) -> tensor<1x3xf32> {
+  %1 = linalg.generic {
+    indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>],
+    iterator_types = ["parallel", "parallel"]
+  } outs(%output : tensor<1x3xf32>) {
+  ^bb0(%out: f32):
+    %2 = linalg.index 1 : index
+    %3 = affine.apply affine_map<(d0, d1) -> (d0 + d1)>(%2, %idx)
+    %extracted = tensor.extract %src[%3] : tensor<16xf32>
+    linalg.yield %extracted : f32
+  } -> tensor<1x3xf32>
+  return %1 : tensor<1x3xf32>
+}
+
+// CHECK-LABEL:   func.func @masked_contiguous_extract_rank_reducing_mask
+// CHECK-SAME:      %[[SRC:.*]]: tensor<16xf32>,
+// CHECK-SAME:      %[[OUTPUT:.*]]: tensor<1x3xf32>,
+// CHECK-SAME:      %[[IDX_IN:.*]]: index) -> tensor<1x3xf32> {
+
+/// Full iteration-space mask (used for the output read/write).
+// CHECK:           %[[MASK_2D:.*]] = vector.create_mask {{.*}} : vector<1x4xi1>
+
+/// The contiguous read of the 1-D source uses a rank-reduced mask.
+// CHECK:           %[[MASK_1D:.*]] = vector.create_mask {{.*}} : vector<4xi1>
+// CHECK:           vector.mask %[[MASK_1D]] {
+// CHECK-SAME:          vector.transfer_read %[[SRC]]{{.*}} {in_bounds = [true, true], permutation_map = {{.*}}} : tensor<16xf32>, vector<1x4xf32>
+// CHECK-SAME:      } : vector<4xi1> -> vector<1x4xf32>
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+     %0 = transform.structured.match ops{["linalg.generic"]} in %arg1 : (!transform.any_op) -> !transform.any_op
+     transform.structured.vectorize %0 vector_sizes [1, 4] {vectorize_nd_extract} : !transform.any_op
+     transform.yield
+   }
 }

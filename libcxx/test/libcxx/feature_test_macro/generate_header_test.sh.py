@@ -7,6 +7,7 @@
 # ===----------------------------------------------------------------------===##
 
 # RUN: %{python} %s %{libcxx-dir}/utils %{libcxx-dir}/test/libcxx/feature_test_macro/test_data.json %t/tests
+# END.
 
 import os
 import sys
@@ -107,7 +108,7 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++23"
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  ifndef __cpp_lib_clamp
 #    error "__cpp_lib_clamp should be defined in c++26"
@@ -123,7 +124,23 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++26"
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  ifndef __cpp_lib_clamp
+#    error "__cpp_lib_clamp should be defined in c++29"
+#  endif
+#  if __cpp_lib_clamp != 201603L
+#    error "__cpp_lib_clamp should have the value 201603L in c++29"
+#  endif
+
+#  ifndef __cpp_lib_parallel_algorithm
+#    error "__cpp_lib_parallel_algorithm should be defined in c++29"
+#  endif
+#  if __cpp_lib_parallel_algorithm != 201603L
+#    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++29"
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -182,7 +199,7 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_any should have the value 201606L in c++23"
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  ifndef __cpp_lib_any
 #    error "__cpp_lib_any should be defined in c++26"
@@ -191,7 +208,16 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_any should have the value 201606L in c++26"
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  ifndef __cpp_lib_any
+#    error "__cpp_lib_any should be defined in c++29"
+#  endif
+#  if __cpp_lib_any != 201606L
+#    error "__cpp_lib_any should have the value 201606L in c++29"
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -261,7 +287,7 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  if !defined(_LIBCPP_VERSION) || (_LIBCPP_HAS_THREADS && _LIBCPP_AVAILABILITY_HAS_SYNC)
 #    ifndef __cpp_lib_barrier
@@ -276,7 +302,22 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  if !defined(_LIBCPP_VERSION) || (_LIBCPP_HAS_THREADS && _LIBCPP_AVAILABILITY_HAS_SYNC)
+#    ifndef __cpp_lib_barrier
+#      error "__cpp_lib_barrier should be defined in c++29"
+#    endif
+#    if __cpp_lib_barrier != 299900L
+#      error "__cpp_lib_barrier should have the value 299900L in c++29"
+#    endif
+#  else
+#    ifdef __cpp_lib_barrier
+#      error "__cpp_lib_barrier should not be defined when the requirement '!defined(_LIBCPP_VERSION) || (_LIBCPP_HAS_THREADS && _LIBCPP_AVAILABILITY_HAS_SYNC)' is not met!"
+#    endif
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -355,7 +396,7 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  if !defined(_LIBCPP_VERSION)
 #    ifndef __cpp_lib_to_chars
@@ -370,7 +411,22 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  if !defined(_LIBCPP_VERSION)
+#    ifndef __cpp_lib_to_chars
+#      error "__cpp_lib_to_chars should be defined in c++29"
+#    endif
+#    if __cpp_lib_to_chars != 201611L
+#      error "__cpp_lib_to_chars should have the value 201611L in c++29"
+#    endif
+#  else
+#    ifdef __cpp_lib_to_chars
+#      error "__cpp_lib_to_chars should not be defined because it is unimplemented in libc++!"
+#    endif
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -438,7 +494,7 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  if !defined(_LIBCPP_VERSION)
 #    ifndef __cpp_lib_format
@@ -453,7 +509,22 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  if !defined(_LIBCPP_VERSION)
+#    ifndef __cpp_lib_format
+#      error "__cpp_lib_format should be defined in c++29"
+#    endif
+#    if __cpp_lib_format != 202311L
+#      error "__cpp_lib_format should have the value 202311L in c++29"
+#    endif
+#  else
+#    ifdef __cpp_lib_format
+#      error "__cpp_lib_format should not be defined because it is unimplemented in libc++!"
+#    endif
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -512,7 +583,7 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++23"
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  ifndef __cpp_lib_parallel_algorithm
 #    error "__cpp_lib_parallel_algorithm should be defined in c++26"
@@ -521,7 +592,16 @@ class Test(unittest.TestCase):
 #    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++26"
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  ifndef __cpp_lib_parallel_algorithm
+#    error "__cpp_lib_parallel_algorithm should be defined in c++29"
+#  endif
+#  if __cpp_lib_parallel_algorithm != 201603L
+#    error "__cpp_lib_parallel_algorithm should have the value 201603L in c++29"
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 
@@ -592,7 +672,7 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#elif TEST_STD_VER > 23
+#elif TEST_STD_VER == 26
 
 #  if !defined(_LIBCPP_VERSION)
 #    ifndef __cpp_lib_variant
@@ -607,7 +687,22 @@ class Test(unittest.TestCase):
 #    endif
 #  endif
 
-#endif // TEST_STD_VER > 23
+#elif TEST_STD_VER > 26
+
+#  if !defined(_LIBCPP_VERSION)
+#    ifndef __cpp_lib_variant
+#      error "__cpp_lib_variant should be defined in c++29"
+#    endif
+#    if __cpp_lib_variant != 202306L
+#      error "__cpp_lib_variant should have the value 202306L in c++29"
+#    endif
+#  else
+#    ifdef __cpp_lib_variant
+#      error "__cpp_lib_variant should not be defined because it is unimplemented in libc++!"
+#    endif
+#  endif
+
+#endif // TEST_STD_VER > 26
 
 // clang-format on
 

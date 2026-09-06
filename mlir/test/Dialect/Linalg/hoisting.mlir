@@ -1,76 +1,37 @@
-// RUN: mlir-opt  -transform-interpreter -canonicalize --split-input-file --allow-unregistered-dialect %s | FileCheck %s
+// RUN: mlir-opt  -transform-interpreter -canonicalize --split-input-file %s | FileCheck %s
 
-// CHECK-LABEL: func @hoist_vector_transfer_pairs(
-//  CHECK-SAME:   %[[MEMREF0:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[MEMREF1:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[MEMREF2:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[MEMREF3:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[MEMREF4:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[MEMREF5:[a-zA-Z0-9]*]]: memref<?x?xf32>,
-//  CHECK-SAME:   %[[VAL:[a-zA-Z0-9]*]]: index,
-//  CHECK-SAME:   %[[LB:[a-zA-Z0-9]*]]: index,
-//  CHECK-SAME:   %[[UB:[a-zA-Z0-9]*]]: index,
-//  CHECK-SAME:   %[[STEP:[a-zA-Z0-9]*]]: index,
-//  CHECK-SAME:   %[[CMP:[a-zA-Z0-9]*]]: i1
-func.func @hoist_vector_transfer_pairs(
-    %memref0: memref<?x?xf32>, %memref1: memref<?x?xf32>, %memref2: memref<?x?xf32>,
-    %memref3: memref<?x?xf32>, %memref4: memref<?x?xf32>, %memref5: memref<?x?xf32>,
-    %val: index, %lb : index, %ub : index, %step: index, %cmp: i1) {
+///----------------------------------------------------------------------------------------
+/// Tests for vector.transfer_read + vector.transfer_write pairs
+///
+/// * Nested inside a single loop
+//  * Indices are constant
+///----------------------------------------------------------------------------------------
+
+// The most basic example - hoisting is safe.
+
+// CHECK-LABEL:   func.func @hoist_basic_vector_xfer_pair(
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index) {
+func.func @hoist_basic_vector_xfer_pair(
+    %mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
   %c0 = arith.constant 0 : index
-  %cst = arith.constant 0.0 : f32
+  %pad = arith.constant 0.0 : f32
 
-// CHECK: vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<1xf32>
-// CHECK: scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args({{.*}}) -> (vector<1xf32>) {
-// CHECK:   vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<2xf32>
-// CHECK:   scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args({{.*}}) -> (vector<1xf32>, vector<2xf32>) {
-// CHECK:     vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<3xf32>
-// CHECK:     vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<4xf32>
-// CHECK:     "some_crippling_use"(%[[MEMREF4]]) : (memref<?x?xf32>) -> ()
-// CHECK:     vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<5xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<1xf32>) -> vector<1xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
-// CHECK:     "some_use"(%[[MEMREF2]], %{{.*}}) : (memref<?x?xf32>, vector<3xf32>) -> vector<3xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<4xf32>) -> vector<4xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<5xf32>) -> vector<5xf32>
-// CHECK:     vector.transfer_write %{{.*}} : vector<3xf32>, memref<?x?xf32>
-// CHECK:     vector.transfer_write %{{.*}} : vector<4xf32>, memref<?x?xf32>
-// CHECK:     vector.transfer_write %{{.*}} : vector<5xf32>, memref<?x?xf32>
-// CHECK:     "some_crippling_use"(%[[MEMREF3]]) : (memref<?x?xf32>) -> ()
-// CHECK:     scf.yield {{.*}} : vector<1xf32>, vector<2xf32>
-// CHECK:   }
-// CHECK:   vector.transfer_write %{{.*}} : vector<2xf32>, memref<?x?xf32>
-// CHECK:   "unrelated_use"(%[[MEMREF0]]) : (memref<?x?xf32>) -> ()
-// CHECK:   scf.yield {{.*}} : vector<1xf32>
-// CHECK: }
-// CHECK: vector.transfer_write %{{.*}} : vector<1xf32>, memref<?x?xf32>
-// CHECK: "unrelated_use"(%[[MEMREF1]]) : (memref<?x?xf32>) -> ()
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:           %[[SCF:.*]] = scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[INIT:.*]] = %[[READ]]) -> (vector<1xf32>) {
+// CHECK:             %[[VAL_6:.*]] = "test.val_use"(%[[INIT]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:             scf.yield %[[VAL_6]] : vector<1xf32>
+// CHECK:           }
+// CHECK:           vector.transfer_write %[[SCF]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
   scf.for %i = %lb to %ub step %step {
-    scf.for %j = %lb to %ub step %step {
-      %r0 = vector.transfer_read %memref1[%c0, %c0], %cst: memref<?x?xf32>, vector<1xf32>
-      %r1 = vector.transfer_read %memref0[%i, %i], %cst: memref<?x?xf32>, vector<2xf32>
-      %r2 = vector.transfer_read %memref2[%c0, %c0], %cst: memref<?x?xf32>, vector<3xf32>
-      %r3 = vector.transfer_read %memref3[%c0, %c0], %cst: memref<?x?xf32>, vector<4xf32>
-      "some_crippling_use"(%memref4) : (memref<?x?xf32>) -> ()
-      %r4 = vector.transfer_read %memref4[%c0, %c0], %cst: memref<?x?xf32>, vector<5xf32>
-      %r5 = vector.transfer_read %memref5[%c0, %c0], %cst: memref<?x?xf32>, vector<6xf32>
-      "some_crippling_use"(%memref5) : (memref<?x?xf32>) -> ()
-      %u0 = "some_use"(%r0) : (vector<1xf32>) -> vector<1xf32>
-      %u1 = "some_use"(%r1) : (vector<2xf32>) -> vector<2xf32>
-      %u2 = "some_use"(%memref2, %r2) : (memref<?x?xf32>, vector<3xf32>) -> vector<3xf32>
-      %u3 = "some_use"(%r3) : (vector<4xf32>) -> vector<4xf32>
-      %u4 = "some_use"(%r4) : (vector<5xf32>) -> vector<5xf32>
-      %u5 = "some_use"(%r5) : (vector<6xf32>) -> vector<6xf32>
-      vector.transfer_write %u0, %memref1[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
-      vector.transfer_write %u1, %memref0[%i, %i] : vector<2xf32>, memref<?x?xf32>
-      vector.transfer_write %u2, %memref2[%c0, %c0] : vector<3xf32>, memref<?x?xf32>
-      vector.transfer_write %u3, %memref3[%c0, %c0] : vector<4xf32>, memref<?x?xf32>
-      vector.transfer_write %u4, %memref4[%c0, %c0] : vector<5xf32>, memref<?x?xf32>
-      vector.transfer_write %u5, %memref5[%c0, %c0] : vector<6xf32>, memref<?x?xf32>
-      "some_crippling_use"(%memref3) : (memref<?x?xf32>) -> ()
-    }
-    "unrelated_use"(%memref0) : (memref<?x?xf32>) -> ()
+      %r0 = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %u0 = "test.val_use"(%r0) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %u0, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
   }
-  "unrelated_use"(%memref1) : (memref<?x?xf32>) -> ()
   return
 }
 
@@ -85,6 +46,414 @@ module attributes {transform.with_named_sequence} {
 }
 
 // -----
+
+// Similar as the example above, but hoisting is no longer safe. That's due to
+// an extra xfer_write inside the loop.
+
+// CHECK-LABEL:   func.func @negative_hoist_basic_vector_xfer_pair_extra_write(
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[IN:[a-zA-Z0-9]+]]: vector<1xf32>) {
+func.func @negative_hoist_basic_vector_xfer_pair_extra_write(
+    %mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index, %in: vector<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             vector.transfer_write %[[IN]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:             %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:             %[[USE:.*]] = "test.val_use"(%[[READ]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:             vector.transfer_write %[[USE]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:           }
+
+  scf.for %i = %lb to %ub step %step {
+      vector.transfer_write %in, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+
+      %r0 = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %u0 = "test.val_use"(%r0) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %u0, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// Similar as the example above, but hoisting is no longer safe. That's due to
+// an extra xfer_write into _an alias_ of the %mem Op that is used by the
+// original xfer pair.
+
+// CHECK-LABEL:   func.func @negative_hoist_basic_vector_xfer_pair_extra_write_into_alias(
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[IN:[a-zA-Z0-9]+]]: vector<1xf32>) {
+func.func @negative_hoist_basic_vector_xfer_pair_extra_write_into_alias(
+    %mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index, %in: vector<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[SV:.*]] = memref.subview %[[MEM]][0, 0] [1, 1] [1, 1] : memref<?x?xf32> to memref<1x1xf32, strided<[?, 1]>>
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             vector.transfer_write %[[IN]], %[[SV]][%[[C0]], %[[C0]]] {{.*}} : vector<1xf32>, memref<1x1xf32, strided<[?, 1]>>
+// CHECK:             %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:             %[[USE:.*]] = "test.val_use"(%[[READ]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:             vector.transfer_write %[[USE]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:           }
+
+  %sv = memref.subview %mem[0, 0][1, 1][1, 1] : memref<?x?xf32> to memref<1x1xf32, strided<[?, 1]>>
+  scf.for %i = %lb to %ub step %step {
+      vector.transfer_write %in, %sv[%c0, %c0] : vector<1xf32>, memref<1x1xf32, strided<[?, 1]>>
+
+      %r0 = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %u0 = "test.val_use"(%r0) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %u0, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// Similar as the example above, but the memory access is done via
+// memref.assume_alignment. Hoisting is safe as the only users of the
+// "allignment" Op are the xfer Ops within the loop that we want to hoist.
+
+// CHECK-LABEL:   func.func @hoist_basic_vector_xfer_pair_with_assume_align(
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[IN:[a-zA-Z0-9]+]]: vector<1xf32>) {
+func.func @hoist_basic_vector_xfer_pair_with_assume_align(
+    %mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index, %in: vector<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[AA:.*]] = memref.assume_alignment %[[MEM]], 4 : memref<?x?xf32>
+// CHECK:           %[[READ:.*]] = vector.transfer_read %[[AA]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:           %[[SCF:.*]] = scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]]  iter_args(%[[INIT:.*]] = %[[READ]]) -> (vector<1xf32>) {
+// CHECK:             %[[USE:.*]] = "test.val_use"(%[[INIT]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:           }
+// CHECK:           vector.transfer_write %[[SCF]], %[[AA]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+
+  %aa = memref.assume_alignment %mem, 4 : memref<?x?xf32>
+  scf.for %i = %lb to %ub step %step {
+      %r0 = vector.transfer_read %aa[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %u0 = "test.val_use"(%r0) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %u0, %aa[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// Similar as the example above, but hoisting is not safe due to extra memory
+// access inside the loop via the original memref.
+
+// CHECK-LABEL:   func.func @negative_hoist_basic_vector_xfer_pair_with_assume_align(
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[IN:[a-zA-Z0-9]+]]: vector<1xf32>) {
+func.func @negative_hoist_basic_vector_xfer_pair_with_assume_align(
+    %mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index, %in: vector<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[AA:.*]] = memref.assume_alignment %[[MEM]], 4 : memref<?x?xf32>
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             %[[READ:.*]] = vector.transfer_read %[[AA]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:             "test.mem_use"(%[[MEM]])
+// CHECK:             vector.transfer_write %[[READ]], %[[AA]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:           }
+
+  %aa = memref.assume_alignment %mem, 4 : memref<?x?xf32>
+  scf.for %i = %lb to %ub step %step {
+      %r0 = vector.transfer_read %aa[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+      vector.transfer_write %r0, %aa[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+///----------------------------------------------------------------------------------------
+/// Tests for vector.transfer_read + vector.transfer_write pairs
+///
+/// * Nested in double loops
+//  * Indices depend on induction variables
+///----------------------------------------------------------------------------------------
+
+// CHECK-LABEL: func @mem_use_outside
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index)
+func.func @mem_use_outside(%mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[I]], %[[I]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:             %[[SCF:.*]] = scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[VAL_5:.*]] = %[[READ]]) -> (vector<1xf32>) {
+// CHECK:               %[[USE:.*]] = "test.val_use"(%[[VAL_5]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:               scf.yield %[[USE]] : vector<1xf32>
+// CHECK:             }
+// CHECK:             vector.transfer_write %[[SCF]], %[[MEM]][%[[I]], %[[I]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:             "test.mem_use"(%[[MEM]]) : (memref<?x?xf32>) -> ()
+// CHECK:           }
+  scf.for %i = %lb to %ub step %step {
+    scf.for %j = %lb to %ub step %step {
+      %read = vector.transfer_read %mem[%i, %i], %pad: memref<?x?xf32>, vector<1xf32>
+      %use = "test.val_use"(%read) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %use, %mem[%i, %i] : vector<1xf32>, memref<?x?xf32>
+    }
+  }
+  "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func @mem_use_inside_outer_loop
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index)
+func.func @mem_use_inside_outer_loop(%mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             %[[READ:.*]] = vector.transfer_read %[[MEM]]{{\[}}%[[I]], %[[I]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:             %[[SCF:.*]] = scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[VAL_5:.*]] = %[[READ]]) -> (vector<1xf32>) {
+// CHECK:               %[[USE:.*]] = "test.val_use"(%[[VAL_5]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:               scf.yield %[[USE]] : vector<1xf32>
+// CHECK:             }
+// CHECK:             vector.transfer_write %[[SCF]], %[[MEM]]{{\[}}%[[I]], %[[I]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:           "test.mem_use"(%[[MEM]]) : (memref<?x?xf32>) -> ()
+// CHECK:           }
+  scf.for %i = %lb to %ub step %step {
+    scf.for %j = %lb to %ub step %step {
+      %read = vector.transfer_read %mem[%i, %i], %pad: memref<?x?xf32>, vector<1xf32>
+      %use = "test.val_use"(%read) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %use, %mem[%i, %i] : vector<1xf32>, memref<?x?xf32>
+    }
+    "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+///----------------------------------------------------------------------------------------
+/// Tests for vector.transfer_read + vector.transfer_write pairs
+///
+/// * Nested in double loops
+//  * Indices are constant
+///----------------------------------------------------------------------------------------
+
+// CHECK-LABEL: func @negative_mem_use_inside_inner_loop_before_write
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index)
+func.func @negative_mem_use_inside_inner_loop_before_write(%mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:               %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:               %[[USE:.*]] = "test.val_use"(%[[READ]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:               "test.mem_use"(%[[MEM]]) : (memref<?x?xf32>) -> ()
+// CHECK:               vector.transfer_write %[[USE]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:             }
+// CHECK:           }
+  scf.for %i = %lb to %ub step %step {
+    scf.for %j = %lb to %ub step %step {
+      %read = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %use = "test.val_use"(%read) : (vector<1xf32>) -> vector<1xf32>
+      "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+      vector.transfer_write %use, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+    }
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func @negative_mem_use_inside_inner_loop_after_write
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index)
+func.func @negative_mem_use_inside_inner_loop_after_write(%mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:             scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:               %[[READ:.*]] = vector.transfer_read %[[MEM]][%[[C0]], %[[C0]]], %[[PAD]] : memref<?x?xf32>, vector<1xf32>
+// CHECK:               %[[USE:.*]] = "test.val_use"(%[[READ]]) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:               vector.transfer_write %[[USE]], %[[MEM]][%[[C0]], %[[C0]]] : vector<1xf32>, memref<?x?xf32>
+// CHECK:               "test.mem_use"(%[[MEM]]) : (memref<?x?xf32>) -> ()
+// CHECK:             }
+// CHECK:           }
+  scf.for %i = %lb to %ub step %step {
+    scf.for %j = %lb to %ub step %step {
+      %r3 = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %u3 = "test.val_use"(%r3) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %u3, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+      "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+    }
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func @negative_mem_use_inside_inner_loop_before_read
+// CHECK-SAME:      %[[MEM:[a-zA-Z0-9]+]]: memref<?x?xf32>,
+// CHECK-SAME:      %[[LB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[UB:[a-zA-Z0-9]+]]: index,
+// CHECK-SAME:      %[[STEP:[a-zA-Z0-9]+]]: index)
+func.func @negative_mem_use_inside_inner_loop_before_read(%mem: memref<?x?xf32>, %lb : index, %ub : index, %step: index) {
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+
+// CHECK: scf.for %[[I:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:   scf.for %[[J:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+// CHECK:     "test.mem_use"(%[[MEM]]) : (memref<?x?xf32>) -> ()
+// CHECK:     vector.transfer_read %{{.*}} : memref<?x?xf32>, vector<1xf32>
+// CHECK:     "test.val_use"(%{{.*}}) : (vector<1xf32>) -> vector<1xf32>
+// CHECK:     vector.transfer_write %{{.*}} : vector<1xf32>, memref<?x?xf32>
+// CHECK:   }
+// CHECK: }
+  scf.for %i = %lb to %ub step %step {
+    scf.for %j = %lb to %ub step %step {
+      "test.mem_use"(%mem) : (memref<?x?xf32>) -> ()
+      %read = vector.transfer_read %mem[%c0, %c0], %pad: memref<?x?xf32>, vector<1xf32>
+      %use = "test.val_use"(%read) : (vector<1xf32>) -> vector<1xf32>
+      vector.transfer_write %use, %mem[%c0, %c0] : vector<1xf32>, memref<?x?xf32>
+    }
+  }
+  return
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["func.func"]} in %arg1
+      : (!transform.any_op) -> !transform.any_op
+    transform.structured.hoist_redundant_vector_transfers %0
+      : (!transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}
+
+// -----
+
+///----------------------------------------------------------------------------------------
+/// Other tests
+///
+/// TODO: Document
+///----------------------------------------------------------------------------------------
 
 // CHECK-LABEL: func @hoist_vector_transfer_pairs_disjoint(
 //  CHECK-SAME:   %[[MEMREF0:[a-zA-Z0-9]*]]: memref<?x?xf32>,
@@ -116,14 +485,14 @@ func.func @hoist_vector_transfer_pairs_disjoint(
 //  CHECK-SAME: (vector<3xf32>, vector<3xf32>, vector<4xf32>, vector<4xf32>) {
 // CHECK:     vector.transfer_read %[[MEMREF1]]{{.*}} : memref<?x?xf32>, vector<2xf32>
 // CHECK:     vector.transfer_read %[[MEMREF1]]{{.*}} : memref<?x?xf32>, vector<2xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<3xf32>) -> vector<3xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<3xf32>) -> vector<3xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<4xf32>) -> vector<4xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<4xf32>) -> vector<4xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
-// CHECK:     "some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<3xf32>) -> vector<3xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<3xf32>) -> vector<3xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<4xf32>) -> vector<4xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<4xf32>) -> vector<4xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
+// CHECK:     "test.some_use"(%{{.*}}) : (vector<2xf32>) -> vector<2xf32>
 // CHECK:     vector.transfer_write %{{.*}}, %[[MEMREF1]]{{.*}} : vector<2xf32>, memref<?x?xf32>
 // CHECK:     vector.transfer_write %{{.*}}, %[[MEMREF1]]{{.*}} : vector<2xf32>, memref<?x?xf32>
 // CHECK:     scf.yield {{.*}} : vector<3xf32>, vector<3xf32>, vector<4xf32>, vector<4xf32>
@@ -144,14 +513,14 @@ func.func @hoist_vector_transfer_pairs_disjoint(
       %r31 = vector.transfer_read %memref3[%c1, %random_index], %cst: memref<?x?xf32>, vector<4xf32>
       %r10 = vector.transfer_read %memref0[%i, %i], %cst: memref<?x?xf32>, vector<2xf32>
       %r11 = vector.transfer_read %memref0[%random_index, %random_index], %cst: memref<?x?xf32>, vector<2xf32>
-      %u00 = "some_use"(%r00) : (vector<2xf32>) -> vector<2xf32>
-      %u01 = "some_use"(%r01) : (vector<2xf32>) -> vector<2xf32>
-      %u20 = "some_use"(%r20) : (vector<3xf32>) -> vector<3xf32>
-      %u21 = "some_use"(%r21) : (vector<3xf32>) -> vector<3xf32>
-      %u30 = "some_use"(%r30) : (vector<4xf32>) -> vector<4xf32>
-      %u31 = "some_use"(%r31) : (vector<4xf32>) -> vector<4xf32>
-      %u10 = "some_use"(%r10) : (vector<2xf32>) -> vector<2xf32>
-      %u11 = "some_use"(%r11) : (vector<2xf32>) -> vector<2xf32>
+      %u00 = "test.some_use"(%r00) : (vector<2xf32>) -> vector<2xf32>
+      %u01 = "test.some_use"(%r01) : (vector<2xf32>) -> vector<2xf32>
+      %u20 = "test.some_use"(%r20) : (vector<3xf32>) -> vector<3xf32>
+      %u21 = "test.some_use"(%r21) : (vector<3xf32>) -> vector<3xf32>
+      %u30 = "test.some_use"(%r30) : (vector<4xf32>) -> vector<4xf32>
+      %u31 = "test.some_use"(%r31) : (vector<4xf32>) -> vector<4xf32>
+      %u10 = "test.some_use"(%r10) : (vector<2xf32>) -> vector<2xf32>
+      %u11 = "test.some_use"(%r11) : (vector<2xf32>) -> vector<2xf32>
       vector.transfer_write %u00, %memref1[%c0, %c0] : vector<2xf32>, memref<?x?xf32>
       vector.transfer_write %u01, %memref1[%c0, %c1] : vector<2xf32>, memref<?x?xf32>
       vector.transfer_write %u20, %memref2[%c0, %c0] : vector<3xf32>, memref<?x?xf32>
@@ -238,7 +607,7 @@ module attributes {transform.with_named_sequence} {
 // CHECK:          scf.for %[[ARG0:.+]] = %[[C0]] to %[[C1024]] step %[[C128]] {
 // CHECK:            %[[D1:.+]] = vector.transfer_read %[[ALLOC_0]][%[[C0]], %[[C0]]], %[[CST]] {in_bounds = [true, true]}
 // CHECK-SAME:         : memref<32x128xf32>, vector<32x128xf32>
-// CHECK:            "some_use"(%[[D0]], %[[D1]], %[[CAST]]) : (vector<32x64xf32>, vector<32x128xf32>, memref<32x128xf32,
+// CHECK:            "test.some_use"(%[[D0]], %[[D1]], %[[CAST]]) : (vector<32x64xf32>, vector<32x128xf32>, memref<32x128xf32,
 // CHECK-SAME:         strided<[128, 1], offset: ?>>) -> ()
 // CHECK:          }
 // CHECK:          memref.dealloc %[[ALLOC]] : memref<32x64xf32>
@@ -254,7 +623,7 @@ func.func @hoist_vector_transfer_read() {
   scf.for %arg0 = %c0 to %c1024 step %c128 {
     %2 = vector.transfer_read %memref2[%c0, %c0], %cst_2 {in_bounds = [true, true]} : memref<32x128xf32>, vector<32x128xf32>
     %3 = vector.transfer_read %memref0[%c0, %c0], %cst_2 {in_bounds = [true, true]} : memref<32x64xf32>, vector<32x64xf32>
-    "some_use"(%3, %2, %subview2) : (vector<32x64xf32>, vector<32x128xf32>, memref<32x128xf32, strided<[128, 1], offset: ?>>) -> ()
+    "test.some_use"(%3, %2, %subview2) : (vector<32x64xf32>, vector<32x128xf32>, memref<32x128xf32, strided<[128, 1], offset: ?>>) -> ()
   }
   memref.dealloc %memref0 : memref<32x64xf32>
   return
@@ -452,7 +821,7 @@ func.func @no_hoisting_collapse_shape(%in_0: memref<1x20x1xi32>, %1: memref<9x1x
   %c0 = arith.constant 0 : index
   %c4 = arith.constant 4 : index
   %c20 = arith.constant 20 : index
-  %alloca = memref.alloca() {alignment = 64 : i64} : memref<1x4x1xi32>
+  %alloca = memref.alloca() alignment = 64 : memref<1x4x1xi32>
   scf.for %arg0 = %c0 to %c20 step %c4 {
     %subview = memref.subview %in_0[0, %arg0, 0] [1, 4, 1] [1, 1, 1] : memref<1x20x1xi32> to memref<1x4x1xi32, strided<[20, 1, 1], offset: ?>>
     %collapse_shape = memref.collapse_shape %alloca [[0, 1, 2]] : memref<1x4x1xi32> into memref<4xi32>
@@ -489,7 +858,7 @@ func.func @no_hoisting_collapse_shape_2(%vec: vector<1x12x1xi32>) {
   %c0 = arith.constant 0 : index
   %c4 = arith.constant 4 : index
   %c20 = arith.constant 20 : index
-  %alloca = memref.alloca() {alignment = 64 : i64} : memref<1x12x1xi32>
+  %alloca = memref.alloca() alignment = 64 : memref<1x12x1xi32>
   scf.for %arg0 = %c0 to %c20 step %c4 {
     %collapse_shape = memref.collapse_shape %alloca [[0, 1, 2]] : memref<1x12x1xi32> into memref<12xi32>
     vector.transfer_write %vec, %alloca[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<1x12x1xi32>, memref<1x12x1xi32>
@@ -533,7 +902,7 @@ func.func @no_hoisting_write_to_buffer(%rhs: i32, %arg1: vector<1xi32>) {
   %c1 = arith.constant 1 : index
   %c4 = arith.constant 4 : index
   %c20 = arith.constant 20 : index
-  %alloca = memref.alloca() {alignment = 64 : i64} : memref<1x1x2xi32>
+  %alloca = memref.alloca() alignment = 64 : memref<1x1x2xi32>
   %cast = memref.cast %alloca : memref<1x1x2xi32> to memref<1x1x2xi32>
   %collapsed_1 = memref.collapse_shape %alloca [[0, 1, 2]] : memref<1x1x2xi32> into memref<2xi32>
   scf.for %_ = %c0 to %c20 step %c4 {
@@ -572,7 +941,7 @@ module attributes {transform.with_named_sequence} {
 //         CHECK:   %3 = vector.transfer_read %[[BUFFER]][%[[PLUS1]], %[[I0]]]
 //         CHECK:   %4 = vector.transfer_read %[[BUFFER]][%[[PLUS1]], %[[PLUS4]]]
 // CHECK-COUNT-2:   scf.for %{{.+}} = {{.+}} -> (vector<4xf32>, vector<4xf32>, vector<4xf32>)
-// CHECK-COUNT-3:     "some_use"
+// CHECK-COUNT-3:     "test.some_use"
 // CHECK-COUNT-2:   scf.yield {{.+}} : vector<4xf32>, vector<4xf32>, vector<4xf32>
 //         CHECK:   vector.transfer_write %{{.+}}, %[[BUFFER]][%[[PLUS1]], %[[PLUS4]]]
 //         CHECK:   vector.transfer_write %{{.+}}, %[[BUFFER]][%[[PLUS1]], %[[I0]]]
@@ -591,9 +960,9 @@ func.func @hoist_vector_transfer_pairs_disjoint_dynamic(
       %r1 = vector.transfer_read %buffer[%i1, %i0], %cst: memref<?x?xf32>, vector<4xf32>
       // Non-overlap trailing dim
       %r2 = vector.transfer_read %buffer[%i1, %i2], %cst: memref<?x?xf32>, vector<4xf32>
-      %u0 = "some_use"(%r0) : (vector<4xf32>) -> vector<4xf32>
-      %u1 = "some_use"(%r1) : (vector<4xf32>) -> vector<4xf32>
-      %u2 = "some_use"(%r2) : (vector<4xf32>) -> vector<4xf32>
+      %u0 = "test.some_use"(%r0) : (vector<4xf32>) -> vector<4xf32>
+      %u1 = "test.some_use"(%r1) : (vector<4xf32>) -> vector<4xf32>
+      %u2 = "test.some_use"(%r2) : (vector<4xf32>) -> vector<4xf32>
       vector.transfer_write %u0, %buffer[%i0, %i0] : vector<4xf32>, memref<?x?xf32>
       vector.transfer_write %u1, %buffer[%i1, %i0] : vector<4xf32>, memref<?x?xf32>
       vector.transfer_write %u2, %buffer[%i1, %i2] : vector<4xf32>, memref<?x?xf32>
@@ -631,8 +1000,8 @@ func.func @hoist_vector_transfer_pairs_overlapping_dynamic(
       %r0 = vector.transfer_read %buffer[%i0, %i0], %cst: memref<?x?xf32>, vector<4xf32>
       // Overlapping range with the above
       %r1 = vector.transfer_read %buffer[%i0, %i1], %cst: memref<?x?xf32>, vector<4xf32>
-      %u0 = "some_use"(%r0) : (vector<4xf32>) -> vector<4xf32>
-      %u1 = "some_use"(%r1) : (vector<4xf32>) -> vector<4xf32>
+      %u0 = "test.some_use"(%r0) : (vector<4xf32>) -> vector<4xf32>
+      %u1 = "test.some_use"(%r1) : (vector<4xf32>) -> vector<4xf32>
       vector.transfer_write %u0, %buffer[%i0, %i0] : vector<4xf32>, memref<?x?xf32>
       vector.transfer_write %u1, %buffer[%i0, %i1] : vector<4xf32>, memref<?x?xf32>
     }
@@ -673,9 +1042,9 @@ func.func @hoist_vector_transfer_pairs_disjoint_dynamic(
       %r0 = vector.transfer_read %buffer[%i0, %i2], %cst: memref<?x?xf32>, vector<16x8xf32>
       %r1 = vector.transfer_read %buffer[%i0, %i3], %cst: memref<?x?xf32>, vector<16x8xf32>
       %r2 = vector.transfer_read %buffer[%i0, %i4], %cst: memref<?x?xf32>, vector<16x8xf32>
-      %u0 = "some_use"(%r0) : (vector<16x8xf32>) -> vector<16x8xf32>
-      %u1 = "some_use"(%r1) : (vector<16x8xf32>) -> vector<16x8xf32>
-      %u2 = "some_use"(%r2) : (vector<16x8xf32>) -> vector<16x8xf32>
+      %u0 = "test.some_use"(%r0) : (vector<16x8xf32>) -> vector<16x8xf32>
+      %u1 = "test.some_use"(%r1) : (vector<16x8xf32>) -> vector<16x8xf32>
+      %u2 = "test.some_use"(%r2) : (vector<16x8xf32>) -> vector<16x8xf32>
       vector.transfer_write %u2, %buffer[%i0, %i4] : vector<16x8xf32>, memref<?x?xf32>
       vector.transfer_write %u1, %buffer[%i0, %i3] : vector<16x8xf32>, memref<?x?xf32>
       vector.transfer_write %u0, %buffer[%i0, %i2] : vector<16x8xf32>, memref<?x?xf32>
@@ -702,7 +1071,7 @@ module attributes {transform.with_named_sequence} {
 //       CHECK-SAME: (%{{.+}}: index, %{{.+}}: index, %{{.+}}: index, %[[VEC:.+]]: vector<3x4xf32>) -> vector<3x4xf32> {
 //       CHECK:        %[[EXTRACT:.+]] = vector.extract %[[VEC]][0] : vector<4xf32> from vector<3x4xf32>
 //       CHECK-NEXT:   %[[LOOP:.+]] = scf.for {{.*}} {
-//       CHECK-NEXT:     %[[USE:.+]] = "some_use"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
+//       CHECK-NEXT:     %[[USE:.+]] = "test.some_use"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
 //       CHECK-NEXT:     scf.yield %[[USE]] : vector<4xf32>
 //       CHECK-NEXT:   }
 //       CHECK-NEXT:   %[[BCAST:.+]] = vector.broadcast %[[LOOP]] : vector<4xf32> to vector<3x4xf32>
@@ -711,7 +1080,7 @@ module attributes {transform.with_named_sequence} {
 func.func @hoist_vector_broadcasts(%lb : index, %ub : index, %step : index, %vec : vector<3x4xf32>) -> vector<3x4xf32> {
   %bcast_vec = scf.for %arg0 = %lb to %ub step %step iter_args(%iarg = %vec) -> vector<3x4xf32> {
     %extract = vector.extract %iarg[0] : vector<4xf32> from vector<3x4xf32>
-    %use = "some_use"(%extract) : (vector<4xf32>) -> vector<4xf32>
+    %use = "test.some_use"(%extract) : (vector<4xf32>) -> vector<4xf32>
     %broadcast = vector.broadcast %use : vector<4xf32> to vector<3x4xf32>
     scf.yield %broadcast : vector<3x4xf32>
   }
@@ -736,7 +1105,7 @@ module attributes {transform.with_named_sequence} {
 //       CHECK-SAME: (%{{.+}}: index, %{{.+}}: index, %{{.+}}: index, %[[VEC:.+]]: vector<3x4xf32>, %[[POS:.+]]: index) -> vector<3x4xf32> {
 //       CHECK:        %[[EXTRACT:.+]] = vector.extract %[[VEC]][%[[POS]]] : vector<4xf32> from vector<3x4xf32>
 //       CHECK-NEXT:   %[[LOOP:.+]] = scf.for {{.*}} {
-//       CHECK-NEXT:     %[[USE:.+]] = "some_use"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
+//       CHECK-NEXT:     %[[USE:.+]] = "test.some_use"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
 //       CHECK-NEXT:     scf.yield %[[USE]] : vector<4xf32>
 //       CHECK-NEXT:   }
 //       CHECK-NEXT:   %[[BCAST:.+]] = vector.broadcast %[[LOOP]] : vector<4xf32> to vector<3x4xf32>
@@ -745,7 +1114,7 @@ module attributes {transform.with_named_sequence} {
 func.func @hoist_vector_broadcasts_dynamic(%lb : index, %ub : index, %step : index, %vec : vector<3x4xf32>, %pos: index) -> vector<3x4xf32> {
   %bcast_vec = scf.for %arg0 = %lb to %ub step %step iter_args(%iarg = %vec) -> vector<3x4xf32> {
     %extract = vector.extract %iarg[%pos] : vector<4xf32> from vector<3x4xf32>
-    %use = "some_use"(%extract) : (vector<4xf32>) -> vector<4xf32>
+    %use = "test.some_use"(%extract) : (vector<4xf32>) -> vector<4xf32>
     %broadcast = vector.broadcast %use : vector<4xf32> to vector<3x4xf32>
     scf.yield %broadcast : vector<3x4xf32>
   }
@@ -772,8 +1141,8 @@ module attributes {transform.with_named_sequence} {
 //       CHECK-DAG:     %[[EXTRACT1:.+]] = vector.extract %[[VEC1]][0] : vector<4xf32> from vector<3x4xf32>
 //       CHECK-DAG:     %[[EXTRACT2:.+]] = vector.extract %[[VEC2]][1] : vector<5xf32> from vector<3x5xf32>
 //       CHECK-NEXT:    %[[LOOP:.+]]:2 = scf.for {{.*}} {
-//       CHECK-DAG:       %[[USE1:.+]] = "some_use1"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
-//       CHECK-DAG:       %[[USE2:.+]] = "some_use2"({{.*}}) : (vector<5xf32>) -> vector<5xf32>
+//       CHECK-DAG:       %[[USE1:.+]] = "test.some_use1"({{.*}}) : (vector<4xf32>) -> vector<4xf32>
+//       CHECK-DAG:       %[[USE2:.+]] = "test.some_use2"({{.*}}) : (vector<5xf32>) -> vector<5xf32>
 //       CHECK-NEXT:      scf.yield %[[USE1]], %[[USE2]]  : vector<4xf32>, vector<5xf32>
 //       CHECK-NEXT:    }
 //       CHECK-DAG:     %[[BCAST1:.+]] = vector.broadcast %[[LOOP]]#0 : vector<4xf32> to vector<3x4xf32>
@@ -784,8 +1153,8 @@ func.func @hoist_vector_broadcasts_multiple(%lb : index, %ub : index, %step : in
   %bcast_vec:2 = scf.for %arg0 = %lb to %ub step %step iter_args(%iarg = %vec1, %iarg2 = %vec2) -> (vector<3x4xf32>, vector<3x5xf32>) {
     %extract1 = vector.extract %iarg[0] : vector<4xf32> from vector<3x4xf32>
     %extract2 = vector.extract %iarg2[1] : vector<5xf32> from vector<3x5xf32>
-    %use1 = "some_use1"(%extract1) : (vector<4xf32>) -> vector<4xf32>
-    %use2 = "some_use2"(%extract2) : (vector<5xf32>) -> vector<5xf32>
+    %use1 = "test.some_use1"(%extract1) : (vector<4xf32>) -> vector<4xf32>
+    %use2 = "test.some_use2"(%extract2) : (vector<5xf32>) -> vector<5xf32>
     %broadcast1 = vector.broadcast %use1 : vector<4xf32> to vector<3x4xf32>
     %broadcast2 = vector.broadcast %use2 : vector<5xf32> to vector<3x5xf32>
     scf.yield %broadcast1, %broadcast2 : vector<3x4xf32>,vector<3x5xf32>

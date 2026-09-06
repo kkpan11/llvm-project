@@ -23,6 +23,7 @@ void DumpEvaluateExpr::Show(const evaluate::CoarrayRef &x) {
   Indent("coarray ref");
   Show(x.base());
   Show(x.cosubscript());
+  Show(x.notify());
   Show(x.stat());
   Show(x.team());
   Outdent();
@@ -151,7 +152,7 @@ void DumpEvaluateExpr::Show(const evaluate::StructureConstructor &x) {
 }
 
 void DumpEvaluateExpr::Show(const evaluate::Relational<evaluate::SomeType> &x) {
-  Indent("expr some type");
+  Indent("relational some type");
   Show(x.u);
   Outdent();
 }
@@ -190,6 +191,12 @@ void DumpEvaluateExpr::Show(const evaluate::SpecificIntrinsic &) {
 
 void DumpEvaluateExpr::Show(const evaluate::DescriptorInquiry &x) {
   Indent("descriptor inquiry");
+  Show(x.base());
+  Outdent();
+}
+
+void DumpEvaluateExpr::Show(const evaluate::RankOneBoundElement &x) {
+  Indent(("rank-1 bound element [" + llvm::Twine(x.dimension()) + "]").str());
   Show(x.base());
   Outdent();
 }

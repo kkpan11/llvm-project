@@ -706,6 +706,42 @@ func.func @pooling_nhwc_max_tensor(%input: tensor<1x4x4x1xf32>) -> tensor<1x2x2x
 }
 
 // -----
+
+// CHECK-LABEL: func @pooling_nhwc_max_unsigned_i32
+// CHECK:         %{{.+}} = linalg.pooling_nhwc_max_unsigned
+// CHECK-SAME:      ins(%{{.+}}, %{{.+}} : tensor<1x4x4x1xi32>, tensor<3x3xi32>)
+// CHECK-SAME:      outs(%{{.+}} : tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+func.func @pooling_nhwc_max_unsigned_i32(%input: tensor<1x4x4x1xi32>) -> tensor<1x2x2x1xi32> {
+  %fake = tensor.empty() : tensor<3x3xi32>
+  %init = tensor.empty() : tensor<1x2x2x1xi32>
+  %cst = arith.constant 0 : i32
+  %fill = linalg.fill ins(%cst : i32) outs(%init : tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+  %res = linalg.pooling_nhwc_max_unsigned {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>}
+    ins(%input, %fake: tensor<1x4x4x1xi32>, tensor<3x3xi32>)
+    outs(%fill: tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+  return %res : tensor<1x2x2x1xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func @pooling_nwc_max_unsigned_i32
+// CHECK:         %{{.+}} = linalg.pooling_nwc_max_unsigned
+// CHECK-SAME:      dilations = dense<1> : tensor<1xi64>
+// CHECK-SAME:      strides = dense<1> : tensor<1xi64>
+// CHECK-SAME:      ins(%{{.+}}, %{{.+}} : tensor<1x4x1xi32>, tensor<3xi32>)
+// CHECK-SAME:      outs(%{{.+}} : tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+func.func @pooling_nwc_max_unsigned_i32(%input: tensor<1x4x1xi32>) -> tensor<1x2x1xi32> {
+  %fake = tensor.empty() : tensor<3xi32>
+  %init = tensor.empty() : tensor<1x2x1xi32>
+  %cst = arith.constant 0 : i32
+  %fill = linalg.fill ins(%cst : i32) outs(%init : tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+  %res = linalg.pooling_nwc_max_unsigned {dilations = dense<1> : tensor<1xi64>, strides = dense<1> : tensor<1xi64>}
+    ins(%input, %fake: tensor<1x4x1xi32>, tensor<3xi32>)
+    outs(%fill: tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+  return %res : tensor<1x2x1xi32>
+}
+
+// -----
 // CHECK-LABEL: func @pooling_nwc_max_tensor
 // CHECK:         %{{.+}} = linalg.pooling_nwc_max
 // CHECK-SAME:      dilations = dense<1> : tensor<1xi64>
@@ -1017,6 +1053,42 @@ func.func @pooling_nhwc_min_tensor(%input: tensor<1x4x4x1xf32>) -> tensor<1x2x2x
 
 // -----
 
+// CHECK-LABEL: func @pooling_nhwc_min_unsigned_i32
+// CHECK:         %{{.+}} = linalg.pooling_nhwc_min_unsigned
+// CHECK-SAME:      ins(%{{.+}}, %{{.+}} : tensor<1x4x4x1xi32>, tensor<3x3xi32>)
+// CHECK-SAME:      outs(%{{.+}} : tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+func.func @pooling_nhwc_min_unsigned_i32(%input: tensor<1x4x4x1xi32>) -> tensor<1x2x2x1xi32> {
+  %fake = tensor.empty() : tensor<3x3xi32>
+  %init = tensor.empty() : tensor<1x2x2x1xi32>
+  %cst = arith.constant 0 : i32
+  %fill = linalg.fill ins(%cst : i32) outs(%init : tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+  %res = linalg.pooling_nhwc_min_unsigned {dilations = dense<1> : tensor<2xi64>, strides = dense<1> : tensor<2xi64>}
+    ins(%input, %fake: tensor<1x4x4x1xi32>, tensor<3x3xi32>)
+    outs(%fill: tensor<1x2x2x1xi32>) -> tensor<1x2x2x1xi32>
+  return %res : tensor<1x2x2x1xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func @pooling_nwc_min_unsigned_i32
+// CHECK:         %{{.+}} = linalg.pooling_nwc_min_unsigned
+// CHECK-SAME:      dilations = dense<1> : tensor<1xi64>
+// CHECK-SAME:      strides = dense<1> : tensor<1xi64>
+// CHECK-SAME:      ins(%{{.+}}, %{{.+}} : tensor<1x4x1xi32>, tensor<3xi32>)
+// CHECK-SAME:      outs(%{{.+}} : tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+func.func @pooling_nwc_min_unsigned_i32(%input: tensor<1x4x1xi32>) -> tensor<1x2x1xi32> {
+  %fake = tensor.empty() : tensor<3xi32>
+  %init = tensor.empty() : tensor<1x2x1xi32>
+  %cst = arith.constant 0 : i32
+  %fill = linalg.fill ins(%cst : i32) outs(%init : tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+  %res = linalg.pooling_nwc_min_unsigned {dilations = dense<1> : tensor<1xi64>, strides = dense<1> : tensor<1xi64>}
+    ins(%input, %fake: tensor<1x4x1xi32>, tensor<3xi32>)
+    outs(%fill: tensor<1x2x1xi32>) -> tensor<1x2x1xi32>
+  return %res : tensor<1x2x1xi32>
+}
+
+// -----
+
 // CHECK-LABEL: func @pooling_nwc_min_tensor
 // CHECK:         %{{.+}} = linalg.pooling_nwc_min
 // CHECK-SAME:      dilations = dense<1> : tensor<1xi64>
@@ -1217,17 +1289,6 @@ func.func @batch_reduce_matmul(%arg0: memref<?x?x?xf32>, %arg1: memref<?x?x?xf32
   // CHECK-SAME: ins(%{{.+}}, %{{.+}} : memref<?x?x?xf32>, memref<?x?x?xf32>)
   // CHECK-SAME: outs(%{{.+}} : memref<?x?xf32>)
   linalg.batch_reduce_matmul ins(%arg0, %arg1 : memref<?x?x?xf32>, memref<?x?x?xf32>) outs(%arg2: memref<?x?xf32>)
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func @matmul_transpose_a
-//       CHECK:   linalg.matmul_transpose_a
-//  CHECK-SAME:     ins(%{{.+}}, %{{.+}} : memref<5x3xf32>, memref<5x7xf32>)
-//  CHECK-SAME:     outs(%{{.+}} : memref<3x7xf32>)
-func.func @matmul_transpose_a(%arg0: memref<5x3xf32>, %arg1: memref<5x7xf32>, %arg2: memref<3x7xf32>) {
-  linalg.matmul_transpose_a ins(%arg0, %arg1 : memref<5x3xf32>, memref<5x7xf32>) outs(%arg2: memref<3x7xf32>)
   return
 }
 
@@ -1475,17 +1536,6 @@ func.func @matmul_bcast_b_transpose_a(%arg0: memref<5x3xf32>, %arg1: memref<5xf3
 // CHECK:           linalg.matmul indexing_maps = [#[[$ATTR_0]], #[[$ATTR_1]], #[[$ATTR_2]]] ins(%[[VAL_0]], %[[VAL_1]] : memref<5x3xf32>, memref<5xf32>) outs(%[[VAL_2]] : memref<3x7xf32>)
 // CHECK:           return
 // CHECK:         }
-
-// -----
-
-// CHECK-LABEL: func @matmul_transpose_b
-//       CHECK:   linalg.matmul_transpose_b
-//  CHECK-SAME:     ins(%{{.+}}, %{{.+}} : memref<3x5xf32>, memref<7x5xf32>)
-//  CHECK-SAME:     outs(%{{.+}} : memref<3x7xf32>)
-func.func @matmul_transpose_b(%arg0: memref<3x5xf32>, %arg1: memref<7x5xf32>, %arg2: memref<3x7xf32>) {
-  linalg.matmul_transpose_b ins(%arg0, %arg1 : memref<3x5xf32>, memref<7x5xf32>) outs(%arg2: memref<3x7xf32>)
-  return
-}
 
 // -----
 
@@ -1806,28 +1856,6 @@ func.func @bcast_A_transpose_B(%A: memref<3x5xf32>, %B: memref<2x7x5xf32>, %C: m
 
 // -----
 
-// CHECK-LABEL: func @batchmatmul_transpose_a
-//       CHECK:   linalg.batch_matmul_transpose_a
-//  CHECK-SAME:     ins(%{{.+}}, %{{.+}} : memref<2x5x3xf32>, memref<2x5x7xf32>)
-//  CHECK-SAME:     outs(%{{.+}} : memref<2x3x7xf32>)
-func.func @batchmatmul_transpose_a(%arg0: memref<2x5x3xf32>, %arg1: memref<2x5x7xf32>, %arg2: memref<2x3x7xf32>) {
-  linalg.batch_matmul_transpose_a ins(%arg0, %arg1 : memref<2x5x3xf32>, memref<2x5x7xf32>) outs(%arg2: memref<2x3x7xf32>)
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func @batchmatmul_transpose_b
-//       CHECK:   linalg.batch_matmul_transpose_b
-//  CHECK-SAME:     ins(%{{.+}}, %{{.+}} : memref<2x3x5xf32>, memref<2x7x5xf32>)
-//  CHECK-SAME:     outs(%{{.+}} : memref<2x3x7xf32>)
-func.func @batchmatmul_transpose_b(%arg0: memref<2x3x5xf32>, %arg1: memref<2x7x5xf32>, %arg2: memref<2x3x7xf32>) {
-  linalg.batch_matmul_transpose_b ins(%arg0, %arg1 : memref<2x3x5xf32>, memref<2x7x5xf32>) outs(%arg2: memref<2x3x7xf32>)
-  return
-}
-
-// -----
-
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1, d2, d3) -> (d0, d1, d3)>
 // CHECK: #[[$ATTR_1:.+]] = affine_map<(d0, d1, d2, d3) -> (d0, d3, d2)>
 // CHECK: #[[$ATTR_2:.+]] = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>
@@ -1946,6 +1974,168 @@ func.func @contract_matmul_bcast_b_transpose_a(%A: memref<5x3xf32>, %B: memref<5
       ins(%A, %B : memref<5x3xf32>, memref<5xf32>)
       outs(%C: memref<3x7xf32>)
   return
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE_A:.+]] = affine_map<(d0, d1, d2) -> (d0 floordiv 32, d2 floordiv 128)>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_SCALE_B:.+]] = affine_map<(d0, d1, d2) -> (d1)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract
+func.func @scaled_contract(
+    %A: tensor<256x512xi8>, %sA: tensor<8x4xf8E8M0FNU>,
+    %B: tensor<128x512xi8>, %sB: tensor<128xf8E8M0FNU>,
+    %C: tensor<256x128xf32>) -> tensor<256x128xf32> {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE_A]], #[[$ACCESS_B]], #[[$ACCESS_SCALE_B]], #[[$ACCESS_C]]]
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<256x512xi8>, tensor<8x4xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : tensor<256x128xf32>) -> tensor<256x128xf32>
+  %D = linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> (m floordiv 32, k floordiv 128)>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> (n)>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : tensor<256x512xi8>, tensor<8x4xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+      outs(%C : tensor<256x128xf32>) -> tensor<256x128xf32>
+  return %D : tensor<256x128xf32>
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE:.+]] = affine_map<(d0, d1, d2) -> ()>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract_tensor_scale
+func.func @scaled_contract_tensor_scale(
+    %A: memref<256x512xi8>, %sA: memref<f8E8M0FNU>,
+    %B: memref<128x512xi8>, %sB: memref<f8E8M0FNU>,
+    %C: memref<256x128xf32>) {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE]], #[[$ACCESS_B]], #[[$ACCESS_SCALE]], #[[$ACCESS_C]]]
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : memref<256x512xi8>, memref<f8E8M0FNU>, memref<128x512xi8>, memref<f8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : memref<256x128xf32>)
+  linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> ()>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> ()>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : memref<256x512xi8>, memref<f8E8M0FNU>, memref<128x512xi8>, memref<f8E8M0FNU>)
+      outs(%C : memref<256x128xf32>)
+  return
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE_A:.+]] = affine_map<(d0, d1, d2) -> (d0)>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_SCALE_B:.+]] = affine_map<(d0, d1, d2) -> (d1)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract_dim_scale
+func.func @scaled_contract_dim_scale(
+    %A: tensor<256x512xi8>, %sA: tensor<256xf8E8M0FNU>,
+    %B: tensor<128x512xi8>, %sB: tensor<128xf8E8M0FNU>,
+    %C: tensor<256x128xf32>) -> tensor<256x128xf32> {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE_A]], #[[$ACCESS_B]], #[[$ACCESS_SCALE_B]], #[[$ACCESS_C]]]
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<256x512xi8>, tensor<256xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : tensor<256x128xf32>) -> tensor<256x128xf32>
+  %D = linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> (m)>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> (n)>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : tensor<256x512xi8>, tensor<256xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+      outs(%C : tensor<256x128xf32>) -> tensor<256x128xf32>
+  return %D : tensor<256x128xf32>
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2 floordiv 32)>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_SCALE_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2 floordiv 32)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract_block_scale
+func.func @scaled_contract_block_scale(
+    %A: tensor<?x?xi8>, %sA: tensor<?x?xf8E8M0FNU>,
+    %B: tensor<?x?xi8>, %sB: tensor<?x?xf8E8M0FNU>,
+    %C: tensor<?x?xf32>) -> tensor<?x?xf32> {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE_A]], #[[$ACCESS_B]], #[[$ACCESS_SCALE_B]], #[[$ACCESS_C]]]
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<?x?xi8>, tensor<?x?xf8E8M0FNU>, tensor<?x?xi8>, tensor<?x?xf8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : tensor<?x?xf32>) -> tensor<?x?xf32>
+  %D = linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> (m, k floordiv 32)>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> (n, k floordiv 32)>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : tensor<?x?xi8>, tensor<?x?xf8E8M0FNU>, tensor<?x?xi8>, tensor<?x?xf8E8M0FNU>)
+      outs(%C : tensor<?x?xf32>) -> tensor<?x?xf32>
+  return %D : tensor<?x?xf32>
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE_A:.+]] = affine_map<(d0, d1, d2) -> (d0 floordiv 32, d2 floordiv 128)>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_SCALE_B:.+]] = affine_map<(d0, d1, d2) -> (d1)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract_cast_unsigned
+func.func @scaled_contract_cast_unsigned(
+    %A: tensor<256x512xi8>, %sA: tensor<8x4xf8E8M0FNU>,
+    %B: tensor<128x512xi8>, %sB: tensor<128xf8E8M0FNU>,
+    %C: tensor<256x128xf32>) -> tensor<256x128xf32> {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE_A]], #[[$ACCESS_B]], #[[$ACCESS_SCALE_B]], #[[$ACCESS_C]]]
+// CHECK-SAME: {cast = #linalg.type_fn<cast_unsigned>}
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<256x512xi8>, tensor<8x4xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : tensor<256x128xf32>) -> tensor<256x128xf32>
+  %D = linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> (m floordiv 32, k floordiv 128)>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> (n)>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : tensor<256x512xi8>, tensor<8x4xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+      outs(%C : tensor<256x128xf32>) {cast = #linalg.type_fn<cast_unsigned>} -> tensor<256x128xf32>
+  return %D : tensor<256x128xf32>
+}
+
+// -----
+
+// CHECK: #[[$ACCESS_A:.+]] = affine_map<(d0, d1, d2) -> (d0, d2)>
+// CHECK: #[[$ACCESS_SCALE_A:.+]] = affine_map<(d0, d1, d2) -> (d2 floordiv 128, d0 floordiv 32)>
+// CHECK: #[[$ACCESS_B:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
+// CHECK: #[[$ACCESS_SCALE_B:.+]] = affine_map<(d0, d1, d2) -> (d1)>
+// CHECK: #[[$ACCESS_C:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
+// CHECK-LABEL: func @scaled_contract_permuted_scale
+func.func @scaled_contract_permuted_scale(
+    %A: tensor<256x512xi8>, %sA: tensor<4x8xf8E8M0FNU>,
+    %B: tensor<128x512xi8>, %sB: tensor<128xf8E8M0FNU>,
+    %C: tensor<256x128xf32>) -> tensor<256x128xf32> {
+// CHECK:  linalg.scaled_contract
+// CHECK-SAME: indexing_maps = [#[[$ACCESS_A]], #[[$ACCESS_SCALE_A]], #[[$ACCESS_B]], #[[$ACCESS_SCALE_B]], #[[$ACCESS_C]]]
+// CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<256x512xi8>, tensor<4x8xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+// CHECK-SAME: outs(%{{.+}} : tensor<256x128xf32>) -> tensor<256x128xf32>
+  %D = linalg.scaled_contract
+      indexing_maps = [affine_map<(m, n, k) -> (m, k)>,
+                       affine_map<(m, n, k) -> (k floordiv 128, m floordiv 32)>,
+                       affine_map<(m, n, k) -> (n, k)>,
+                       affine_map<(m, n, k) -> (n)>,
+                       affine_map<(m, n, k) -> (m, n)>]
+      ins(%A, %sA, %B, %sB : tensor<256x512xi8>, tensor<4x8xf8E8M0FNU>, tensor<128x512xi8>, tensor<128xf8E8M0FNU>)
+      outs(%C : tensor<256x128xf32>) -> tensor<256x128xf32>
+  return %D : tensor<256x128xf32>
 }
 
 // -----
@@ -2690,6 +2880,20 @@ func.func @select_tensor(%arg0: tensor<4x8x16xi1>, %arg1: tensor<4x8x16xf32>, %a
   return %1 : tensor<4x8x16xf32>
 }
 
+// -----
+
+// CHECK-LABEL: func @select_integer_values
+// linalg.select with i1 condition and integer values: headBool=true (i1 bitwidth==1)
+// → valid, arith.select accepts i1 as condition regardless of value types.
+func.func @select_integer_values(%arg0: tensor<4x8x16xi1>, %arg1: tensor<4x8x16xi32>, %arg2: tensor<4x8x16xi32>) -> tensor<4x8x16xi32> {
+  %0 = tensor.empty() : tensor<4x8x16xi32>
+  // CHECK: linalg.select
+  // CHECK-SAME: ins(%{{.+}}, %{{.+}}, %{{.+}} : tensor<4x8x16xi1>, tensor<4x8x16xi32>, tensor<4x8x16xi32>)
+  // CHECK-SAME: outs(%{{.+}} : tensor<4x8x16xi32>)
+  %1 = linalg.select ins(%arg0, %arg1, %arg2 : tensor<4x8x16xi1>, tensor<4x8x16xi32>, tensor<4x8x16xi32>) outs(%0: tensor<4x8x16xi32>) -> tensor<4x8x16xi32>
+  return %1 : tensor<4x8x16xi32>
+}
+
 //===----------------------------------------------------------------------===//
 // linalg.pack + linalg.unpack
 //===----------------------------------------------------------------------===//
@@ -2768,6 +2972,101 @@ func.func @pad_and_pack_partially_dynamic(%source: tensor<?x?xf32>, %dest: tenso
 // CHECK-SAME:  %[[DEST:.*]]: tensor<?x?x8x2xf32>,
 // CHECK-SAME:  %[[PAD:.*]]: f32)
 // CHECK: %{{.*}} = linalg.pack %[[SOURCE]] padding_value(%[[PAD]] : f32) inner_dims_pos = [0, 1] inner_tiles = [8, 2] into %[[DEST]] : tensor<?x?xf32> -> tensor<?x?x8x2xf32>
+
+// -----
+
+func.func @pack_transposed_inner_dims_with_padding(%source: tensor<1x5x7xf32>, %dest: tensor<1x3x2x4x2xf32>, %pad: f32) -> tensor<1x3x2x4x2xf32> {
+  %0 = linalg.pack %source padding_value(%pad : f32) inner_dims_pos = [2, 1] inner_tiles = [4, 2] into %dest : tensor<1x5x7xf32> -> tensor<1x3x2x4x2xf32>
+  return %0 : tensor<1x3x2x4x2xf32>
+}
+
+// CHECK-LABEL: func.func @pack_transposed_inner_dims_with_padding(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<1x5x7xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<1x3x2x4x2xf32>,
+// CHECK-SAME:  %[[PAD:.*]]: f32)
+// CHECK:       %{{.*}} = linalg.pack
+// CHECK-SAME:      inner_dims_pos = [2, 1]
+// CHECK-SAME:      inner_tiles = [4, 2]
+// CHECK-SAME:      into %[[DEST]] : tensor<1x5x7xf32> -> tensor<1x3x2x4x2xf32>
+
+// -----
+
+// The function suffix "with_padding" refers to the padding that was introduced by the pack operation. But here
+// we are dropping the padding. Creating a tensor with less elements than what we started with.
+func.func @unpack_descending_inner_dims_with_padding(%source: tensor<1x3x2x4x2xf32>, %dest: tensor<1x5x7xf32>) -> tensor<1x5x7xf32> {
+  %0 = linalg.unpack %source inner_dims_pos = [2, 1] inner_tiles = [4, 2] into %dest : tensor<1x3x2x4x2xf32> -> tensor<1x5x7xf32>
+  return %0 : tensor<1x5x7xf32>
+}
+
+// CHECK-LABEL: func.func @unpack_descending_inner_dims_with_padding(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<1x3x2x4x2xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<1x5x7xf32>)
+// CHECK:       %{{.*}} = linalg.unpack
+// CHECK-SAME:      inner_dims_pos = [2, 1]
+// CHECK-SAME:      inner_tiles = [4, 2]
+// CHECK-SAME:      into %[[DEST]] : tensor<1x3x2x4x2xf32> -> tensor<1x5x7xf32>
+
+// -----
+
+func.func @pack_non_adjacent_inner_dims(%source: tensor<20x1x12xf32>, %dest: tensor<10x1x3x4x2xf32>) -> tensor<10x1x3x4x2xf32> {
+  %0 = linalg.pack %source inner_dims_pos = [2, 0] inner_tiles = [4, 2] into %dest : tensor<20x1x12xf32> -> tensor<10x1x3x4x2xf32>
+  return %0 : tensor<10x1x3x4x2xf32>
+}
+
+// CHECK-LABEL: func.func @pack_non_adjacent_inner_dims(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<20x1x12xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<10x1x3x4x2xf32>)
+// CHECK:       %{{.*}} = linalg.pack
+// CHECK-SAME:      inner_dims_pos = [2, 0]
+// CHECK-SAME:      inner_tiles = [4, 2]
+// CHECK-SAME:      into %[[DEST]] : tensor<20x1x12xf32> -> tensor<10x1x3x4x2xf32>
+
+// -----
+
+func.func @unpack_non_adjacent_inner_dims(%source: tensor<10x1x3x4x2xf32>, %dest: tensor<20x1x12xf32>) -> tensor<20x1x12xf32> {
+  %0 = linalg.unpack %source inner_dims_pos = [2, 0] inner_tiles = [4, 2] into %dest : tensor<10x1x3x4x2xf32> -> tensor<20x1x12xf32>
+  return %0 : tensor<20x1x12xf32>
+}
+
+// CHECK-LABEL: func.func @unpack_non_adjacent_inner_dims(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<10x1x3x4x2xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<20x1x12xf32>)
+// CHECK:       %{{.*}} = linalg.unpack
+// CHECK-SAME:      inner_dims_pos = [2, 0]
+// CHECK-SAME:      inner_tiles = [4, 2]
+// CHECK-SAME:      into %[[DEST]] : tensor<10x1x3x4x2xf32> -> tensor<20x1x12xf32>
+
+// -----
+
+func.func @pack_implementing_transpose(%source: tensor<3x5x7xf32>, %dest: tensor<3x7x5xf32>) -> tensor<3x7x5xf32> {
+  %0 = linalg.pack %source outer_dims_perm = [0, 2, 1] inner_dims_pos = [] inner_tiles = [] into %dest : tensor<3x5x7xf32> -> tensor<3x7x5xf32>
+  return %0 : tensor<3x7x5xf32>
+}
+
+// CHECK-LABEL: func.func @pack_implementing_transpose(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<3x5x7xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<3x7x5xf32>)
+// CHECK:       %{{.*}} = linalg.pack
+// CHECK-SAME:      outer_dims_perm = [0, 2, 1]
+// CHECK-SAME:      inner_dims_pos = []
+// CHECK-SAME:      inner_tiles = []
+// CHECK-SAME:      into %[[DEST]] : tensor<3x5x7xf32> -> tensor<3x7x5xf32>
+
+// -----
+
+func.func @unpack_implementing_transpose(%source: tensor<3x7x5xf32>, %dest: tensor<3x5x7xf32>) -> tensor<3x5x7xf32> {
+  %0 = linalg.unpack %source outer_dims_perm = [0, 2, 1] inner_dims_pos = [] inner_tiles = [] into %dest : tensor<3x7x5xf32> -> tensor<3x5x7xf32>
+  return %0 : tensor<3x5x7xf32>
+}
+
+// CHECK-LABEL: func.func @unpack_implementing_transpose(
+// CHECK-SAME:  %[[SOURCE:.*]]: tensor<3x7x5xf32>,
+// CHECK-SAME:  %[[DEST:.*]]: tensor<3x5x7xf32>)
+// CHECK:       %{{.*}} = linalg.unpack
+// CHECK-SAME:      outer_dims_perm = [0, 2, 1]
+// CHECK-SAME:      inner_dims_pos = []
+// CHECK-SAME:      inner_tiles = []
+// CHECK-SAME:      into %[[DEST]] : tensor<3x7x5xf32> -> tensor<3x5x7xf32>
 
 // -----
 
